@@ -1,0 +1,51 @@
+{
+  "displayName": "Defiance Red",
+  "export": "defiance.red.model.glb",
+  "source": "sc.defiance.red.prepared.glb",
+  "output": "sc.defiance.red.rigged.glb",
+  "height": 2.25,
+  "rebuildComment": "'npm run rebuild -- sc.defiance.red' prepares 'export' into 'source' (shrinks the textures), stands it on y = 0 at 'height' tall (the export is 1.75 tall) and rigs it. The export is already low-poly (15.8k triangles), so there is no reduce step.",
+  "comment": "Coordinates are in model units after the rescale: x = character's left, y = up (feet at 0), z = forward. Bones marked mirror are copied to the right side with x negated. Measured with scripts/measure-glb.mjs on sc.defiance.red.prepared.glb. Two objects: defiance.red.body (armour, T-pose, one fused surface) and defiance.red.head (the helmet, one fused surface).",
+  "relaxedArmsComment": "Where the arms rest while the body tracker does not see them (left arm; the right is mirrored). Held a little out so the forearm armour clears the hip plates.",
+  "relaxedArms": { "upper": [0.42, -0.9, 0.05], "lower": [0.3, -0.9, 0.3] },
+  "smoothIterations": 3,
+
+  "keepComment": "'keep': the bone only takes points on one side of a plane (normal . point >= offset). The arm bones stop at a line from the armpit (x 0.26, y 1.68) up and in to x 0.2 at y 1.95, so the shoulder pad follows the arm and the side of the chest does not. The shoulder bone (shrug) only takes the top of the shoulder, outside a line from (x 0.2, y 1.72) up and in to (x 0.1, y 1.9), so a shrug does not lift the chest plates. 'smooth' on hips / spine / chest / shoulder: one smoothing pass instead of three, so arm movement does not spread into the chest plates.",
+
+  "partsComment": "The helmet is rigid: the whole head object is fixed to the head bone. There is no jaw, no mouth and no expression shapes (the face is a mask).",
+  "parts": [
+    { "match": "\\.head", "bone": "head" }
+  ],
+  "mouth": { "cut": false, "interior": false },
+
+  "webcamHeadComment": "The operator's own head, cut out of the webcam picture, can take the helmet's place: the 'Helmet' button or the V key in the app. 'hide' = the objects that are swapped out (the helmet). 'scale' = size of the webcam head (1 = a head that would fit in the helmet). 'offset' moves it from the helmet's centre [left, up, forward]. 'contrast' = contrast of the webcam picture (1 = as the camera gives it). Run 'npm run rig -- sc.defiance.red' after changing these.",
+  "webcamHead": { "hide": "\\.head", "scale": 1.15, "offset": [0, -0.06, 0.18], "contrast": 1.6 },
+
+  "bones": [
+    { "name": "hips", "pos": [0, 1.2, 0.0], "tail": [0, 1.35, 0.0] },
+    { "name": "spine", "parent": "hips", "pos": [0, 1.36, 0.0], "tail": [0, 1.52, 0.0], "smooth": 1 },
+    { "name": "chest", "parent": "spine", "pos": [0, 1.54, 0.0], "tail": [0, 1.85, 0.0], "smooth": 1 },
+    { "name": "neck", "parent": "chest", "pos": [0, 1.9, -0.01], "tail": [0, 2.0, 0.0] },
+    { "name": "head", "parent": "neck", "pos": [0, 2.0, 0.0], "tail": [0, 2.25, 0.02] },
+
+    { "name": "leftShoulder", "parent": "chest", "pos": [0.08, 1.84, 0.0], "tail": [0.28, 1.8, -0.01], "side": true, "mirror": true, "smooth": 1, "keep": { "normal": [0.874, 0.485, 0], "offset": 1.009 } },
+    { "name": "leftUpperArm", "parent": "leftShoulder", "pos": [0.3, 1.79, -0.01], "tail": [0.56, 1.775, -0.015], "side": true, "mirror": true, "keep": { "normal": [0.976, 0.217, 0], "offset": 0.618 } },
+    { "name": "leftLowerArm", "parent": "leftUpperArm", "pos": [0.56, 1.775, -0.015], "tail": [0.85, 1.775, -0.015], "side": true, "mirror": true, "keep": { "normal": [0.976, 0.217, 0], "offset": 0.618 } },
+    { "name": "leftHand", "parent": "leftLowerArm", "pos": [0.85, 1.775, -0.015], "tail": [0.97, 1.775, -0.01], "side": true, "mirror": true },
+
+    { "name": "leftThumb1", "parent": "leftHand", "pos": [0.92, 1.755, 0.045], "tail": [0.965, 1.75, 0.08], "side": true, "mirror": true, "smooth": 1, "reach": 0.022 },
+    { "name": "leftThumb2", "parent": "leftThumb1", "pos": [0.965, 1.75, 0.08], "tail": [1.005, 1.745, 0.11], "side": true, "mirror": true, "smooth": 1, "reach": 0.022 },
+    { "name": "leftIndex1", "parent": "leftHand", "pos": [0.975, 1.78, 0.042], "tail": [1.04, 1.78, 0.043], "side": true, "mirror": true, "smooth": 1, "reach": 0.02 },
+    { "name": "leftIndex2", "parent": "leftIndex1", "pos": [1.04, 1.78, 0.043], "tail": [1.105, 1.775, 0.045], "side": true, "mirror": true, "smooth": 1, "reach": 0.02 },
+    { "name": "leftMiddle1", "parent": "leftHand", "pos": [0.98, 1.78, 0.0], "tail": [1.05, 1.78, 0.0], "side": true, "mirror": true, "smooth": 1, "reach": 0.02 },
+    { "name": "leftMiddle2", "parent": "leftMiddle1", "pos": [1.05, 1.78, 0.0], "tail": [1.12, 1.775, 0.0], "side": true, "mirror": true, "smooth": 1, "reach": 0.02 },
+    { "name": "leftRing1", "parent": "leftHand", "pos": [0.975, 1.78, -0.03], "tail": [1.04, 1.78, -0.03], "side": true, "mirror": true, "smooth": 1, "reach": 0.018 },
+    { "name": "leftRing2", "parent": "leftRing1", "pos": [1.04, 1.78, -0.03], "tail": [1.105, 1.775, -0.03], "side": true, "mirror": true, "smooth": 1, "reach": 0.018 },
+    { "name": "leftPinky1", "parent": "leftHand", "pos": [0.965, 1.778, -0.058], "tail": [1.02, 1.778, -0.058], "side": true, "mirror": true, "smooth": 1, "reach": 0.018 },
+    { "name": "leftPinky2", "parent": "leftPinky1", "pos": [1.02, 1.778, -0.058], "tail": [1.07, 1.775, -0.058], "side": true, "mirror": true, "smooth": 1, "reach": 0.018 },
+
+    { "name": "leftUpperLeg", "parent": "hips", "pos": [0.15, 1.15, 0.03], "tail": [0.17, 0.66, 0.05], "side": true, "leg": true, "mirror": true },
+    { "name": "leftLowerLeg", "parent": "leftUpperLeg", "pos": [0.17, 0.66, 0.05], "tail": [0.19, 0.13, -0.01], "side": true, "leg": true, "mirror": true },
+    { "name": "leftFoot", "parent": "leftLowerLeg", "pos": [0.19, 0.13, -0.01], "tail": [0.2, 0.03, 0.2], "side": true, "leg": true, "mirror": true }
+  ]
+}

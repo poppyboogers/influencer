@@ -1,0 +1,230 @@
+# Character Mocap — status and plan
+
+Last updated 20 November 2026. This file is the handoff: read "Where we are" and "Next steps" to resume.
+
+Original feasibility study: [docs/webcam_character_mocap_feasibility.md](docs/webcam_character_mocap_feasibility.md)
+
+## Goal
+
+Turn a character image into a rigged 3D avatar and drive it in real time from an ordinary webcam, locally, using open-source models where possible. First character: **Vandude** (a Vanduul-style alien). Second: **Loveheart** (a cat in a red tutu), `/?character=loveheart`.
+
+## Pipeline
+
+```
+1. SOURCE   generate an image from a prompt, or provide one
+2. ENRICH   user context -> web references -> design brief          (not built)
+3. VIEWS    T-pose front / back / left / right images                (done by hand for Vandude)
+4. MESH     image-to-3D model -> mesh                                (two routes working, see below)
+5. REDUCE   high-poly -> low-poly with textures                      (working)
+6. RIG      skeleton + skin weights + mouth                          (working, joints hand-placed)
+7. DRIVE    webcam -> face + body tracking -> skinned avatar         (working, user-confirmed)
+```
+
+## Folder layout (changed 19 November, night)
+
+**Each character has its own folder: `characters/<id>/` holds `<id>.rig.json`, `<id>.rigged.glb`, `<id>.face.json`, `<id>.joints.json`, `<id>.weights.json`, the source / export models, the Blender file and reference images.** File names inside a rig file are relative to that folder. The scripts, the app and the viewer all read from there.
+
+**Vandude was renamed Vanduude at the user's request: id `vanduude`, folder `characters/vanduude/`, files `vanduude.*` / `vanduude-lowpoly-*`.** It is the app's default character. Older notes below still say `vandude` and show files directly in `characters/`; read them with the new names and folder. The Blender file links its images as `//textures\...`, so `characters/vanduude/textures/` must stay beside it. Blender export target is now `characters/vanduude/vanduude-lowpoly-ver1.glb`.
+
+The unused files that were left directly in `characters/` (old `vandude*` files, `.blend1`-`.blend30` backups, the two turnaround sheets, `archive/`, `cat in red tutu/`) were sent to the Recycle Bin on 20 November at the user's request. `characters/` now holds only `vanduude/` and `loveheart/`; file tables further down that list other files are out of date.
+
+## Hosting package and character picker (20 November)
+
+**`npm run package`** builds the standalone site for cPanel-style hosting: folder `site/` and the same thing zipped as `character-mocap-site.zip` (about 37 MB). Upload the zip with cPanel's File Manager and extract it in `public_html` or any subfolder (all addresses are relative). The site must be opened over **https**, or browsers refuse the webcam.
+
+- The package holds the webcam app only: no viewer / joint editor, no scripts, no source models. Per character it copies `<id>.rigged.glb`, `<id>.face.json`, the roughness / emissive maps and a picker picture (`<id>.thumb.jpg|png|webp`, else the first image with "front" in its name).
+- **Characters are no longer built into the app.** It reads `characters/characters.json` (written by the package; made on the fly by the dev server, `characterList` in `vite.config.ts`) and fetches each character's files from `characters/<id>/`. Shared listing code: `scripts/characters.mjs`. Picker and `BASE` address: `src/characters.ts`.
+- **Picker:** with no `?character=` in the address the app opens on a card screen (it used to default to Vanduude); with one character it goes straight in. In the app: "Change character" button top right, or **P**. Choosing reloads the page on `?character=<id>`. `"displayName"` in the rig file sets the card's name.
+- **Adding a character later:** rig it here as usual, then `npm run package -- --only <id>` and upload `site/characters/<id>/` plus `site/characters/characters.json` into the site's `characters/` folder. Nothing else needs re-uploading. (Or run the full package and replace everything.)
+- The package stores each expression shape as only the points that move (sparse), with no change to what is drawn: Loveheart 46 -> 12 MB, Vanduude 11 -> 5 MB. The files in `characters/` are untouched.
+- `site/.htaccess` sets the file types for `.wasm` / `.glb`, compression and caching; every block is optional for the host.
+- Checked with headless Edge against `site/` served from a subfolder: picker, both characters in `?demo`, switching from the in-app picker, and the webcam path with a fake camera (all three trackers loaded). **Not yet uploaded to the real host or tried there.**
+
+## Third character: Defiance Red (22 November)
+
+Armoured figure with a helmet, open with `/?character=sc.defiance.red`. Folder `characters/sc.defiance.red/` (the user's folder name, so that is the id; `"displayName"` is "Defiance Red"). The user's export is `defiance.red.model.glb`: two objects, `defiance.red.body` (14.4k triangles, T-pose, one fused surface) and `defiance.red.head` (the helmet, 1.4k triangles, one fused surface), 1.75 tall, 8k / 4k PNG textures (99 MB).
+
+- **Ids may now contain dots** (`scripts/characters.mjs`, the joint editor in `vite.config.ts`, the viewer's `?model=` shortcut). Before, a dotted folder was silently skipped.
+- **No reduce step** (already low-poly). `npm run rebuild -- sc.defiance.red` prepares the export (textures to 2048 px JPEG, 3.7 MB) and, new, **`"height": 2.25` in a rig file makes the rebuild rescale the prepared model** to that height with `normalize-glb.mjs`. All rig coordinates are in the rescaled units.
+- **Rig file `sc.defiance.red.rig.json`:** 39 bones (body, 5 fingers x 2 bones per hand, legs), `smoothIterations` 3 (the mesh is coarse: 7.2k points), `relaxedArms` held out to clear the hip plates. No soft parts.
+- **Arm weights (after the user reported the upper arms moving the chest):** upper and lower arm bones have a `"keep"` plane from the armpit (x 0.26, y 1.68) up and in to (x 0.2, y 1.95), so the shoulder pad follows the arm and the chest side does not; the shoulder bone (shrug) only takes the top of the shoulder; spine / chest / shoulder have `"smooth": 1`. Chest-side vertices with over 30% arm weight went 445 -> 0. Seen in headless `?demo` renders only; the user has not yet confirmed it.
+- **The helmet is rigid:** `"parts": [{ "match": "\\.head", "bone": "head" }]`. No jaw, no mouth, no expression shapes, so talking does not show on this character. **The user confirmed (22 November) that the head is a helmet and must stay rigid: do not add a jaw or expression shapes to it.**
+- `scripts/measure-glb.mjs --plain` draws without the grid; used for the picker picture `sc.defiance.red.thumb.png`.
+- Checked in headless renders (picker, `?demo` with and without bones, viewer): arms, torso and head move without visible tearing. **Not tried on a webcam; fingers not looked at closely** (the hand has very few points). Not yet in the hosting package: `npm run package -- --only sc.defiance.red`.
+
+### Webcam head in place of the helmet (22 November)
+
+The user asked for their own head from the webcam on this body, with the helmet as a button / key to show or hide, for this model only.
+
+- Switched on by `"webcamHead": { "hide": "\\.head", "scale": 1, "offset": [0, 0, 0] }` in the rig file (passed through by `scripts/rig-character.mjs` on the root bone, like `relaxedArms`). A character without it has no button and no key.
+- In the app: the **Helmet** button (top right, under Change character) or **V**. **The helmet always starts off** (webcam head showing; the user's choice, 22 November); the choice is not remembered between visits; `?helmet=on` in the address starts with it on.
+- `src/webcamHead.ts`: a flat card at the helmet's centre that always faces the viewer, showing a square of the webcam picture around the face (position, size and tilt from face landmarks 10 and 152, added to the tracker as `sample.head`). Background removed with MediaPipe's selfie segmenter (`public/models/selfie_segmenter.tflite`, 250 KB, added to `scripts/setup-assets.mjs`, loaded only when the webcam head is first switched on), limited to an oval around the face (`OVAL` at the top of the file: raise `halfHeight` if hair is cut off, lower it if shoulders show). Mirror (M) flips the picture. While no face is found the helmet comes back, so the body is never headless.
+- Later the same day, at the user's request: Y also toggles (they tried Y); `scale` 1.3 was "too big" after 1 was too small, now 1.15; a hard cut just under the chin (`CHIN_CUT` in `src/webcamHead.ts`, no neck); the segmenter now runs on the enlarged square around the face rather than the whole frame, for a finer edge. The user asked whether another method gives a better result: offered a sharper camera picture (the webcam is opened at 640x480) and a true 3D face from the tracker's face mesh; no answer yet.
+- Then: the bottom of the cut-out follows the tracked jawline ear to ear instead of a straight line (`JAW_MARGIN` in `src/webcamHead.ts`; `sample.head.jaw` from the tracker), and `"contrast": 1.3` in the rig file's `webcamHead` (1 = unchanged). Bright faces pick up the scene's bloom glow; not yet addressed.
+- `?demo` shows a drawn stand-in face (no webcam there).
+- Checked headless with a fake webcam (a picture of the loveheart character on a busy background): face found, background removed, head sits on the neck, V and the button swap it. **Not yet seen with the user's real webcam**: size (`scale`), height (`offset`) and how much hair / neck the oval keeps may need tuning. The card is flat, so orbiting to the side shows it flat.
+- Outline smoothing (`MASK_SMOOTH` in `src/webcamHead.ts`): the cut-out is blurred, tightened again and blended with the previous frame, so the edge is rounded and steady rather than stepped.
+- **Packaged (22 November):** full `npm run package` after all of the above: `site/` 73.8 MB, `character-mocap-site.zip` 40.7 MB, three characters, `selfie_segmenter.tflite` included (`.tflite` added to the `.htaccess` file types). Checked headless against `site/` served from a subfolder with a fake webcam: Defiance Red loads, helmet / webcam head swap works, no missing files. **Not yet uploaded by the user.**
+- **UI hidden by default, buttons always stay (22 November, all characters, the user's rule):** the app opens in the hidden state (read-out and camera preview off; H shows them, `?ui` in the address opens with them showing) and the Change character / Helmet buttons are never hidden. Contrast of the webcam head raised to 1.6. Package rebuilt after these (same sizes).
+
+### Fingers no longer bend backwards (22 November, all characters)
+
+The user asked for an upper limit on finger tracking so fingers cannot bend backwards. In `poseHand` (`src/rigAvatar.ts`) each tracked finger direction is clamped before the bone is aimed: the first bone may lean at most `FINGER_BACK_LIMIT[0]` (0.17 rad, about 10 degrees) past the back of the hand, the second at most `FINGER_BACK_LIMIT[1]` (0.05 rad) back past the first; the thumb's base gets `THUMB_BACK_LIMIT` (0.7 rad) and its tip is not limited. Curling toward the palm is untouched. Checked in `?demo` on Defiance Red: normal curl renders identically with the limit on and off, and a hand fed backward-bent fingers stays open and straight. Not yet seen on the webcam, and the head webcam position changes (lower, forward) are also unconfirmed by the user.
+
+## Where we are
+
+**The app works end to end for Vandude.** The user tested it with their webcam and reported it "works really good". Head, jaw and arms are driven live.
+
+| Piece | State |
+|---|---|
+| Webcam app (`/`) | Working. Face tracker drives head, neck, jaw, brows, mouth corners; body tracker drives both arms, torso (lean, bend, twist from fixed hips) and shoulder shrugs; untracked arms hang relaxed |
+| Camera selection | Skips NDI/OBS virtual cameras, opens the real webcam; **K** cycles cameras |
+| Model viewer (`/viewer.html`) | Working. Wireframe modes, skeleton overlay, per-bone sliders |
+| Local mesh generation | Working. Hunyuan3D-2mv on the laptop GPU; untextured |
+| Meshy mesh | User exported a textured 1.58M-triangle GLB from Meshy; reduced to 55k triangles |
+| Rigging script | Working. 24 bones, automatic mouth cut with cavity, tongue and teeth |
+
+Not individually confirmed by the user: brow and mouth-corner motion, arm direction correctness, frame rates.
+
+**In progress when the session closed:** the user wants to model the mouth by hand instead of using the automatic cut. They will edit `characters/vandude.meshy.lowpoly.glb` (uncut, unrigged) and re-rig it.
+
+**Update, later on 18 November:** the user rebuilt the mesh as `characters/vandude.highpoly.glb` (1.6M triangles, base-colour texture only, centred on the origin, 1.9 units tall — not the old feet-at-0 / 2.25-tall frame). Reduced to `characters/vandude.lowpoly.glb` (55k triangles) with glTF Transform CLI: `weld`, then `simplify --ratio 0.0345 --error 0.01`. The low-poly was then rescaled to feet at 0 / 2.25 tall with `node scripts/normalize-glb.mjs` (the high-poly was left as exported). `vandude.rig.json` was re-measured for this mesh (A-pose arms, digitigrade legs, `"cut": false`, `"interior": false` because the mouth is hand-modelled) and `vandude.rigged.glb` rebuilt from it. The mouth is modelled open, so `mouth.restOpen` (0.38 rad) is written onto the jaw bone and `rigAvatar.ts` rotates the jaw back by that much when the tracked mouth is closed. Not yet confirmed by the user: how the new rig deforms in the viewer and with the webcam, especially the mouth closing. In PowerShell start the server with `npx vite --port 5183` (`npm run dev -- --port` loses the `--`). Older files are in `characters/archive/`.
+
+**Added later on 18 November (soft parts, fingers, bone overlay):**
+
+- **Cape and hair are simulated.** `rig-character.mjs` lays a grid of bones over each soft part (`"soft"` in the rig file: cape 7x8, hair 5x6); `src/softBody.ts` simulates the grid points (gravity, breeze, fixed-length links, body collision capsules from `"colliders"`, pull back to the modelled shape). Tuning is the `"sim"` block per part.
+- **Parts by object name.** The mesh is still one fused surface, so cape is picked by red texture colour and hair by dark colour + position (`"select"`), which is approximate. The rig script already handles separate objects: names matching `"parts"` rules (`cape`, `hair`, `teeth`, `teeth_lower`, `glasses`) become soft parts or are fixed to one bone, and the colour guess switches off for a part that has its own object. The user plans to separate cape and hair and add teeth and sunglasses. Untested with a multi-object GLB; the reduce step (`gltf-transform simplify`) and `normalize-glb.mjs` should keep objects separate but that is unchecked.
+- **Cape squeeze fixed:** cape points may only follow hips/spine/chest/neck (`"base"`), never the arms.
+- **Fingers:** 10 finger bones per hand (thumb + 4 fingers, 2 bones each), `src/hands.ts` (MediaPipe Hand Landmarker, model fetched by `npm run setup`), hands matched to arms by the body tracker's wrist positions. Runs on the frames the body tracker skips. Checked only with `?demo` synthetic motion; real-webcam finger tracking and left/right assignment are unconfirmed.
+- **Bone overlay:** **S** in the app and the viewer (green lines, spheres at joints; cape/hair grids drawn as grids). App also has **F** fingers on/off, and address flags `?bones`, `?clean`. Viewer: `?still` turns the simulation off.
+- **Checking without the user's browser:** headless Edge via a debugging port + `playwright-core` from the npx cache worked for screenshots (wait for `window.__ready`); Playwright's own launch did not.
+- Known rough spots: shoulder armour follows the upper arm on big arm raises; finger weights bleed slightly into the palm.
+
+**19 November: new model `characters/vandude-lowpoly-ver1.glb` (aloha shirt, no cape) replaces the old one.** Everything above about the cape, colour-picked hair and blob face bones describes the old model; its rig file is kept as `characters/archive/vandude.rig.v1-cape.json`.
+
+- **Source prep:** `node scripts/prepare-glb.mjs characters/vandude-lowpoly-ver1.glb characters/vandude-lowpoly-ver1.prepared.glb` drops the high-poly object and empties, bakes object transforms (the upper teeth are a mirrored copy), shrinks textures to 2048 px JPEG. 172 MB -> 3.4 MB.
+- **Blender vertex groups do not survive the GLB export** (no armature). `tools/blend_weights.py` reads them from the `.blend` into `characters/vandude.weights.json`; the rig script matches them by position. Command is in "How to run". The hair group is `hair.weight`, read as 0 = held to the head, 1 = fully soft (it is 0 at the roots).
+- **Soft parts are now `"type": "body"`** (keeps its modelled shape, wobbles and springs back; not cloth). Control points are spread over the part, each a bone; `src/softBody.ts` class `Volume` simulates them. The old grid type (`Sheet`) is still in the code for capes.
+  - Hair: separate object, 64 control points, softness from the Blender group.
+  - Shirt: fused into the body mesh, so it is picked by texture colour (`"color": "fabric"`) inside boxes, with hole filling. 56 control points, held at collar / shoulders (`"pin"`), softer toward hem and sleeves. Slight bleed onto arm skin under the sleeve hems and the top of the shorts under the hem. A separate shirt object in Blender (name containing "shirt", plus a `{ "match": "shirt", "soft": "shirt" }` rule under `"parts"`) would be exact.
+  - `npm run rig -- vandude --parts` writes `vandude.parts.glb`, coloured by part, to check the selection in the viewer.
+- **Teeth:** `teeth.bottom.001` is the upper row (fixed to `head`), `teeth.bottom` the lower (fixed to `jaw`).
+- **Mouth:** modelled open; `restOpen` 0.34 rad closes it to a thin line with teeth just showing.
+- **Hands have a thumb and two fingers**: bones are Thumb, Index (long front finger), Pinky (rear finger).
+- **Arms hang close to the torso**, so arm bones have a `"keep"` plane in the rig file; without it the side of the shirt followed the arm.
+- **Facial expressions:** 38 shapes (morph targets) built by the rig script from `"morphs"` in the rig file, named like the MediaPipe / ARKit signals (mouthSmileLeft, mouthPucker, mouthFunnel, eyeBlinkLeft, browDownLeft, noseSneerLeft, cheekPuff ...). `src/main.ts` drives each shape from the signal of the same name: relaxed-face level removed (**C** now also stores that, so calibrate with a relaxed face), per-shape gain (`SHAPE_GAIN`), smoothing, left/right swapped when mirrored. jawLeft / jawRight / jawForward move the jaw bone. The overlay's `face` line shows the strongest shapes.
+- Viewer has an Expression dropdown + Amount slider, and `&shape=name:1,name2:0.5`. App demo: `?demo` plays through every shape; `?demo&shape=...&pose=...` holds them.
+- **Joint editor (viewer, "Move joints"):** click a green joint dot on the model (turn Skeleton on) and drag the arrow handle that appears on it (three.js TransformControls), or pick a joint in the panel, type X / Y depth / Z up (Blender axes), two checkboxes: "Mirror X" (the other side moves the opposite way left/right) and "Mirror Y and Z" (same depth and height); untick either for individual control. The pivot moves live without moving the mesh; "Save joints and re-rig" posts to the dev server (`/api/joints/<id>` in `vite.config.ts`), which writes `characters/<id>.joints.json` and re-runs the rig script. Those positions override `"bones"` in the rig file. The user said shoulder and elbow positions are wrong and will fix them with this.
+- **Legs (the character stands on its toes):** `UpperLeg` hip -> knee, `LowerLeg` knee -> ankle (the raised heel joint), a single `Foot` bone ankle -> ball of the foot, `Toes` at the ball (lifts all toes), then each toe as its own straight two-bone chain (`ToeInner1/2`, `ToeMiddle1/2`, `ToeOuter1/2`) starting at its own base joint in line with the toe (`"detached": true`: child of `Toes`, but no line drawn back to the ball). The skeleton overlay now also draws end bones to their tips. Not driven by mocap.
+- **Soft parts stiffened** at the user's request ("make more rigid", taken to mean shirt and hair): shirt follow 0.4 / maxOffset 0.025, hair follow 0.1 / maxOffset 0.2.
+- **Editing the base model:** `npm run rebuild -- vandude` re-runs prepare, Blender vertex groups and rig from the files named by `"export"` / `"blend"` in the rig file. Rig file and saved joints carry over as long as proportions and object names stay roughly the same.
+- **Arm / shoulder weights reworked (later 19 November)** after the user reported bad deformation raising the arms to a T-pose:
+  - Shirt and hair no longer ride on control-point bones. They keep ordinary skin weights; the wobble of the nearest control points is added after skinning in the vertex shader (`_SOFTINDEX` / `_SOFTWEIGHT` vertex attributes, `softOffsets` uniform, patched into materials in `src/softBody.ts`). Skeleton is 38 bones. This supersedes the "control points are bones" description above.
+  - The arm bones' `"keep"` plane now runs down from the measured armpit (x 0.215, y 1.51) through the gap between sleeve and torso, so the whole sleeve follows the arm and the torso side does not.
+  - `smoothIterations` 8 -> 5 to stop arm weight spreading across the chest.
+  - The user's saved joints (`vandude.joints.json`: shoulders, upper arms, elbows, head) are kept. Checked in headless renders only (T-pose, arms up, forearm bent).
+- **Model re-exported (19 November, 2:24 pm) as `characters/vandude-lowpoly-reedit.glb`** (small teeth and texture changes). `"export"` / `"source"` in the rig file now point at `vandude-lowpoly-reedit.glb` / `vandude-lowpoly-reedit.prepared.glb`; rebuilt with `npm run rebuild -- vandude` (46 bones, 38 shapes, saved joints kept). The previous rigged file and weights are in `characters/archive/*.before-reedit.*`. Checked in headless renders: texture, upper teeth on the head, lower teeth following the jaw. Do not rewrite the rig file with PowerShell `Set-Content -Encoding utf8` (adds a byte-order mark that breaks the JSON read).
+- **Face tweaks (19 November, afternoon):**
+  - **Jaw weights:** the whole lower jaw now swings from the joint (`"bodyZ"` in `"mouth"`: nothing at the joint, full by z 0.075) instead of only the chin. Around the mouth corners (`"cornerZ"`, `"cornerBand"`, `"cornerFade"`) the skin above and below the mouth line shares the jaw movement, so the corners lift when the mouth closes; this fixed the corners drooping at rest. The user said "the jaw is looking good".
+  - **Face tuning file `characters/vandude.face.json`** (read by `src/main.ts`, saving it reloads the app): `"gain"` per shape (0 = off) and `"limit"` (0..1 cap). Added because the pucker was over-driven; mouthPucker gain is now 1.0 (was 1.4). Blink is listed there too at the user's request.
+  - **Kiss:** `mouthPucker` rebuilt: corners in (kept outside the rigid teeth), lips forward, and pursed with a new `"curl"` push type in the rig script (top lip rolls up and out, bottom lip down and out). The user asked for the curl and prefers it exaggerated; not yet seen by them with the curl in.
+- **Re-export at 3:21 pm, 19 November:** the user now exports to `vandude-lowpoly-ver1.glb` again, so `"export"` / `"source"` point at `vandude-lowpoly-ver1.glb` / `vandude-lowpoly-ver1.prepared.glb` (a `vandude-lowpoly-reedit.glb` of the same size was saved 20 seconds earlier and is not used). New object `gums.upper`, fixed to `head` like the upper teeth by a new `"parts"` rule (any other "gum" object goes to `jaw`).
+- **Later on 19 November (export of 3:41 pm, new textures):**
+  - **The user says the mouth "works great" and wants it locked.** Do not change `"mouth"`, the mouth shapes or the jaw weights without being asked.
+  - **Face detail:** the exported face had 4 points per eye, 5 per brow, 9 on the nose, so blink / frown / scrunch could not show. `"refine"` in the rig file makes `prepare-glb.mjs` (`--refine`) split every triangle in a box over the upper face into four, twice (flat split, shape unchanged; box stops above the upper lip). Now 65 / 97 / 146 points. Remove `"refine"` if the user subdivides the face in Blender.
+  - **Shapes:** `browDown` strengthened; `noseSneer` rebuilt as a nose scrunch on the nose bridge (it was lifting the upper lip before).
+  - **Signals:** the tracker's own noseSneer / browDown scores are weak, so `src/tracker.ts` also measures them from the face landmarks (`geoNose*`, `geoBrow*`) and `src/main.ts` adds that in; strength under `"landmarks"` in `vandude.face.json`. Blink gain 2.2 and a much faster blink filter. **None of this has been tried on a real face** — the landmark gains (10 / 8) are guesses; press **C** with a relaxed face first.
+  - **Hair** had been made nearly rigid by the earlier stiffening (follow 0.1). Now follow 0.025, damping 0.05, maxOffset 0.3; seen swinging in `?demo`. The value from before the stiffening was not recorded.
+  - Screenshots: port 9333 is used by another program on this machine; use another port (9347 worked).
+- **Torso and shrug tracking (19 November, evening).** The user reported that shrugging did nothing and asked for the whole torso to follow mocap, fixed at the hips. The shoulder / spine / chest bones existed but nothing drove them.
+  - `src/body.ts` now also returns shoulders, hip midpoint (null when hidden) and ear line; `src/torso.ts` (`TorsoFilter`) turns them into lean / bend / twist and a per-shoulder shrug, relative to the pose held for the first 12 body frames. **C** and **M** re-take that reference, so calibrate sitting upright with relaxed shoulders.
+  - Hips hidden (seated): lean = how far the shoulders slid sideways in the picture, bend = how much closer they got (from apparent shoulder width, assumes a 60 degree webcam), over an assumed 0.5 m torso. Hips visible: tilt of the hip-to-shoulder line. Shrug = shoulder rising toward the ear line.
+  - `src/rigAvatar.ts`: spine takes 45% and chest 55% of the torso turn, hips never move; shoulder bones swing up for a shrug (`SHRUG_GAIN`, `SHRUG_LIMIT`); neck and head now make up the rest of the face tracker's head direction, so the head stays level when the torso leans.
+  - Overlay has a `torso` line; **B** switches arms and torso together. `?demo` sways and shrugs; `?demo&pose=0,0,0,0&torso=lean,bend,twist,shrugL,shrugR` (degrees, shrugs 0..1) holds a pose.
+  - The user then said the shrug "looks good" after `SHRUG_GAIN` went 1.2 -> 2.5, but the neck did not bulge. Added shape `bodyShrug` (Left / Right) under `"morphs"` in the rig file: the muscle between neck and shoulder swells up and out and the collar rises with it (`"clothes": true` lets a shape move the shirt too). `rigAvatar.ts` turns it on in step with the shoulder angle. Shapes named `body...` are hidden from the face tracker and the demo's shape cycle. A small-radius push spiked through the collar on this coarse neck mesh; keep the radius broad (0.075). Bulge not yet seen by the user.
+  - Checked in headless renders and with synthetic shoulder positions only. **Not tried on a real webcam**: amounts, jitter and whether the bend estimate is steady enough are unknown. Limits and smoothing are at the top of `src/torso.ts`.
+- **Second character: Loveheart (19 November, night)** — a cat in a red tutu, open with `/?character=loveheart`. Everything in `characters/loveheart/` (`loveheart.glb`, 4.8M triangles, one fused mesh, T-pose, painted eyes and mouth, plus four reference images). `characters/cat in red tutu/` is an identical copy of that folder made by the user; unused.
+  - **Reduce:** new `scripts/reduce-glb.mjs` (meshoptimizer) keeps a separate triangle budget for a box (the face) and stands the model at 2.25 tall: 62k triangles for the model + 30k for the face -> `loveheart/loveheart.lowpoly.glb`. The exact command is `"reduceCommand"` in `characters/loveheart.rig.json`. A plain glTF Transform `simplify` to 72k left the face as flat facets; do not go back to it.
+  - **Measure:** new `scripts/measure-glb.mjs` draws flat front / back / left / right / top pictures with a labelled grid in model units, slices, and `--probe` depths. All of Loveheart's joints and face landmarks were measured with it (replaces the gridded-screenshot method in next step 3).
+  - **Rig file `characters/loveheart.rig.json`** (40 bones, 35 shapes; `npm run rebuild -- loveheart`). New optional rig settings, all passed to the app through the root bone: `"view"` (camera target / distance; the default framing cut her hair off), `"relaxedArms"` (untracked arms are held out so the hands clear the tutu), `"material"` (`metallic: 0`; the generated textures marked the dress as metal and it rendered as dark chrome). New colour test `"any"` = a soft part picked by boxes alone.
+  - **Mouth is painted, not cut:** the jaw's hold grows from the upper lip line to the bottom of the lower lip (`cornerZ` set out of reach, `cornerBand` [0, 0.045]), so the painted mouth stretches open and squashes to a line when closed (`restOpen` 0.24). Blink squashes the painted eye.
+  - **Every body bone has a `"keep"` plane under the chin**: the head is so wide that cheeks were as near to the shoulder bones as to the head bone.
+  - **Soft parts by position:** hair (everything on the head except the face; held near the skull), skirt (red cloth from hem to y 1.16; stopping lower let the wide top layer follow the arms), tail.
+  - Checked in headless renders only (rest, mouth open / closed, blink + frown, head turn, arms down / up, back view, `?demo`). **Not tried on a webcam.** Known rough spots: fingers are short and webbed so curling bends the whole front of the paw; the tail is coarse (40 points); expression amounts are first guesses (no `loveheart.face.json` yet).
+  - Screenshots: port 9347 is now also taken by other headless browsers on this machine; 9461 worked. Check a port is free before using it, or the script silently drives someone else's browser.
+- **Lighting (20 November):** `src/lighting.ts` now sets the app's look for every character: studio surroundings for reflections (`RoomEnvironment`), a warm key light that casts shadows (the character shadows itself; the shadow pass carries the soft-body wobble), cool fill and a stronger blue rim light, neutral tone mapping, sharper textures at a slant. All numbers are in `LOOK` at the top of that file. `?plain` gives the old three-light setup for comparison. Keep `environment` low (0.2): at 0.45 and above it drowned the key light and the character looked flat. The viewer (`viewer.html`) still uses the old lights. Checked in headless renders only (Vanduude and Loveheart); **frame rate with shadows on the webcam is not measured**. Vanduude's texture has no metal anywhere and shading painted into the colour texture, so material gains are limited until the textures change.
+- **Eye glow and generated roughness (20 November):** `tools/venv/Scripts/python.exe tools/make_material_maps.py vanduude` writes `characters/vanduude/vanduude.roughness.png` (teeth / gums / hair by object, cloth from the model's own roughness map, eyes and mouth interior by position and colour, skin with fine variation from the colour texture) and `vanduude.emissive.png` (the orange part of the eyes). The app loads both when they exist (`mapFiles` in `src/rigAvatar.ts`, applied in `src/lighting.ts`) and adds a bloom pass (`eyeGlow`, `bloom` in `LOOK`); a rebuild does not overwrite them. **Roll back:** delete the two PNGs (model's own textures return) and set `bloom.strength` to 0; `?plain` skips all of it. Values in `ROUGH` at the top of the tool; skin at 0.52 looked wet under the rim light, 0.6 is the current base. The glow halo does not show over a transparent background (matters for a future OBS overlay). On Loveheart (no generated maps) the bloom also catches the bright highlights on her skirt. Checked in headless renders only; the user has not seen it and frame rate is not measured.
+- **Upper teeth and upper gums raised (20 November):** a `"parts"` rule in the rig file can carry `"offset": [x, y, z]`, which moves that whole object before rigging (`rig-character.mjs`), so the shift survives rebuilds and the Blender file is untouched. Both upper rules have `[0, 0.006, 0]` (the teeth are 0.026 tall; about half as much tooth now shows below the lip). Change the number and run `npm run rig -- vanduude`; remove it once the teeth are moved in Blender. Checked in headless viewer renders (mouth open and closed); the user has not seen it.
+- **Teeth sinking into the mouth during a pucker, fixed (20 November):** the user reported the teeth disappearing into the mouth mesh when puckering, lower row worst. Cause: the pucker's round pushes on the lips also reached the floor and roof of the mouth behind them, which rose / dropped about 0.01 over the rigid teeth. A shape in the rig file can now carry `"guardTeeth": true` (`rig-character.mjs`, `teethHold`): skin behind the front of each teeth row is held still, fading to free 0.001-0.007 in front of the teeth (`"guard"` under `"mouth"` overrides the distances). Set on `mouthPucker` only; the other mouth shapes are unchanged because the mouth is locked. Checked with cross-sections and headless viewer renders (jaw open, half closed, closed); not yet seen by the user on the webcam. Headless Edge must be closed with `taskkill /PID <pid> /T /F`; killing only the launcher left it holding its port.
+- **At-rest jitter (20 November):** on the webcam the user saw the bottom lip quivering and the chest rotating back and forth while sitting still. Added `Steady` in `src/smoothing.ts`: the output holds still until the input has moved more than a band, so noise under the band gives no movement at all. Applied before the smoothing filters to torso lean / bend / twist (`STEADY` in `src/torso.ts`: 0.012 / 0.02 / 0.045 rad; twist comes from the tracker's shoulder depth guess and is the noisiest) and to every expression signal except blink and to jawOpen (`SHAPE_STEADY` 0.02, `JAW_STEADY` 0.012 in `src/main.ts`, before gain). Torso filters also slowed (twist and bend 0.5 Hz) and the jaw filter 4.0 -> 3.0. Mouth shapes and jaw weights untouched (mouth is locked). **Band sizes are guesses: the noise was not measured and the result has not been seen on the webcam.** Not covered: head yaw / pitch / roll and the landmark-measured nose scrunch / brow frown. **Result: the user said the chest is fixed, but the lower jaw still bobbed up and down at rest; they have a beard.** Follow-up: `src/tracker.ts` now also reports `geoMouth` (gap between inner-lip landmarks 13 and 14, over the eye distance), and `src/main.ts` multiplies the jaw by a gate that is 0 while the lips are together and 1 once they have parted (`LIP_GATE` 0.02..0.07 beyond the relaxed gap, taken from the **C** calibration or the first frame seen); `JAW_STEADY` raised to 0.025. The beard as the cause is a likely guess, not measured, and the gate has not been seen on the webcam. jawSide / jawForward are not gated.
+- **Jaw follows the lip gap (20 November):** the user said Vanduude looked like he was talking through his teeth: the lip shapes parted the lips while the jaw (and the lower teeth fixed to it) barely moved, because the tracker's jawOpen score stays small during speech and is gated. `src/main.ts` now also turns the measured lip gap (`geoMouth` beyond the relaxed gap) into a jaw opening (`JAW_FROM_LIPS`: dead zone 0.012, gain 4.5, steady band 0.008) and the jaw takes the larger of that and the gated jawOpen score. Tunable per character under `"jaw"` in `<id>.face.json` (`fromLips`, `lipDeadZone`; `fromLips` 0 restores the old behaviour). Lip shapes, mouth settings and jaw weights untouched. **Type-checked only; not seen on the webcam, and the gain is an estimate** (about 2 should match the real opening). `?demo` has no lip measurement, so it does not show this. If the jaw bobs at rest again, raise `lipDeadZone`. The user then asked for "a little less" three times: `fromLips` in `vanduude.face.json` went 4.5 -> 3.5 -> 2.8 -> 2.2 (the code default is still 4.5).
+- **Arms flailing with head-and-shoulders framing (20 November):** the user's webcam only sees the upper bust, and the arms and hands moved uncontrollably. Cause (read from the code, not measured): the body tracker still reports elbows and wrists that are below the picture, as wandering guesses with a high visibility score, and `src/body.ts` trusted the score alone. Now a joint only counts when it is also inside the picture (`EDGE` 0.02 from the border); an arm is followed only when its elbow or its wrist is in the picture, otherwise it hangs relaxed. `src/main.ts`: an arm must be seen for `ARM_ACQUIRE_MS` (250) without a break before it is followed, and a hand is only followed while its arm is. **Type-checked only; not seen on the webcam.** If the arms still twitch when an elbow sits right at the bottom edge, raise `EDGE`. **Follow-up:** the user said it was less but an arm still raised. Rule tightened: an arm is followed only when its **wrist** is in the picture (an elbow in view alone no longer counts), `EDGE` 0.02 -> 0.04. Still not seen on the webcam. If an arm still lifts, the tracker is placing a guessed wrist inside the picture; next step would be to require the hand tracker to confirm a real hand near that wrist. **Second follow-up:** the user then saw Vanduude's right arm bent up and toward the camera with their arms at their sides, so the tracker does invent a wrist inside the picture. `src/main.ts` now feeds an arm only while the hand tracker has found a hand within `HAND_AT_WRIST` (0.15 of the picture) of that wrist in the last `HAND_CONFIRMS_ARM_MS` (800); the hand tracker therefore keeps running when fingers are off (**F**) as long as the body is on. Skipped in `?demo` and when the hand tracker failed to load. Type-checked only. Possible side effect to watch: an arm dropping to the side when the hand is a fist, blurred or edge-on for longer than 0.8 s.
+- **Hair strand with no held root, fixed (21 November):** of the 16 hair strands, one on top of the head (root ring near x 0.011, y 2.23, z -0.099; thinner than the rest) had `hair.weight` 1 on every point, so its root swung free. Its 6 root-ring points were set to 0 **in `vanduude.weights.json` only** (the pattern on every other strand: root ring 0, rest 1), then `npm run rig -- vanduude` and `npm run package -- --only vanduude`. Its root control point went from softness 1 to 0.642, in line with the other roots. **The Blender file still has that strand unpainted, so `npm run rebuild -- vanduude` will undo this** until the root ring is painted 0 in the `hair.weight` group there. Previous files: `vanduude.weights.before-strand-fix.json`, `vanduude.rigged.before-strand-fix.glb`. Checked by reading the numbers back; not seen moving.
+- **Checked only in headless renders and `?demo`**, not yet with the user's webcam: expression gains, how the hair and shirt move, finger mapping on the three-digit hand.
+- Not done: hand-sculpted Blender shape keys are not carried through the rig script (it would replace the generated shapes of the same name). Eyes are texture only, so no eye-direction tracking.
+
+## How to run
+
+```
+npm run dev                      # app on Vite's default address (add -- --port 5183 for the old one)
+npm run package                  # standalone site for web hosting: site/ and character-mocap-site.zip
+npm run rig -- vanduude          # rebuild characters/vanduude/vanduude.rigged.glb from vanduude.rig.json
+npm run setup                    # re-fetch tracking models / WASM into public/ (already done)
+# after re-exporting the model from Blender to characters/vanduude/vanduude-lowpoly-ver1.glb:
+npm run rebuild -- vanduude      # prepare + Blender vertex groups + rig, all inside characters/vanduude/
+tools/venv/Scripts/python.exe tools/make_mesh.py vandude --quality --resolution 380   # local mesh
+```
+
+- App: `/` — keys **C** calibrate, **M** mirror, **B** arms on/off, **K** next camera, **H** hide UI; `?demo` runs without a camera.
+- Viewer: `/viewer.html?model=<id>.rigged.glb` (found in the character's folder; any other file by its path inside `characters/`) — keys **W** wireframe, **S** skeleton, **T** texture, **R** reset pose.
+
+## Files
+
+| Path | What it is |
+|---|---|
+| `src/main.ts` | App loop: trackers -> smoothing -> avatar pose, overlay, keys |
+| `src/tracker.ts`, `src/body.ts` | MediaPipe Face Landmarker and Pose Landmarker wrappers |
+| `src/rigAvatar.ts` | Loads `<id>.rigged.glb`, poses bones (head/jaw/face/arms) |
+| `src/camera.ts` | Webcam startup with virtual-camera avoidance |
+| `src/viewer.ts`, `viewer.html` | Model viewer |
+| `scripts/rig-character.mjs` | Mouth cut + interior + skeleton + skin weights |
+| `scripts/reduce-glb.mjs` | Reduces a raw image-to-3D export, keeping extra detail in one box (the face) |
+| `scripts/measure-glb.mjs` | Gridded flat pictures of a model for measuring joints and face landmarks |
+| `scripts/setup-assets.mjs` | Downloads tracking models, copies WASM |
+| `scripts/make-depth.mjs` | Leftover from the abandoned depth-map approach; unused |
+| `tools/make_mesh.py` | Local Hunyuan3D-2mv mesh generation |
+| `tools/Hunyuan3D-2GP`, `tools/venv`, `tools/.cache` | Low-memory Hunyuan3D build, its Python 3.10 env, ~10 GB of model weights |
+
+Character files in `characters/`:
+
+| File | What it is |
+|---|---|
+| `vandude.png`, `vandude-character_sheet.png`, `vandude_t-pose_*.png` | Source images (front, back, side-left, side-right, two three-quarter views) |
+| `Meshy_AI_Crimson_Warlord_1117201602_texture.glb` | Original Meshy export, 1.58M triangles, 109 MB |
+| `vandude.meshy.lowpoly.glb` | Reduced to 55k triangles, textured. **Base for rigging and for hand edits** |
+| `vandude.rig.json` | Bone positions and mouth settings (hand-measured) |
+| `vandude.rigged.glb` | Output of the rig script; what the app loads |
+| `vandude.mesh.glb` | Local Hunyuan3D mesh, high detail (250k triangles, untextured) |
+| `vandude.mesh.fast.glb` | First local Hunyuan3D run (fast setting, visible stair-stepping) |
+| `vandude.depth.png`, `vandude.json` | Leftovers from the depth-map approach; unused |
+
+## Next steps
+
+1. **Hand-modelled mouth.** After the user exports an edited GLB into `characters/`: set `"source"` in `vandude.rig.json`, add `"cut": false` and `"interior": false` under `"mouth"`, adjust `"planeY"` / `"minZ"` to the new mouth line, run `npm run rig -- vandude`. This path is untested with a hand-edited mesh. Offer made: a low-poly version with the head kept denser.
+2. **Confirm the untested motion** with the user: arm directions, brows, mouth corners, frame rates from the overlay.
+3. **Automate joint placement.** Bone positions for Vandude were measured from gridded screenshots and typed into `vandude.rig.json`. A new character needs the same until this is automated (idea: run pose detection on the T-pose front image, centre joints in the limb cross-sections).
+4. **Fingers and hand tracking.** No finger bones yet; each hand moves as one piece.
+5. **Texture for the local mesh route**, by projecting the T-pose images onto the Hunyuan3D mesh, so the pipeline does not depend on Meshy.
+6. **Creation flow in the app:** generate or provide an image, fill in missing views with the OpenAI image API (`OPENAI_API_KEY` in `.env`, unused so far), mesh, reduce, rig.
+7. **Later:** OBS overlay (deferred by the user), performance while gaming, cape and dreadlock motion, legs.
+
+## Decisions and constraints
+
+- **Local and open source first.** The user chose the local route over hosted demos and paid APIs. Meshy was used once by the user for the textured mesh.
+- **Hardware:** RTX 3050 laptop GPU with 4 GB VRAM. Hunyuan3D shape generation fits (fast run 24 s; quality run at resolution 380 about 9 minutes). Texture generation and UniRig auto-rigging do not fit.
+- **Disk:** C: is nearly full; everything large lives on D: under `tools/`.
+- **No NURBS:** the image-to-3D model outputs a sampled volume, so stair-stepping is fixed with higher resolution plus Taubin smoothing (already in `make_mesh.py`).
+- **True retopology** (clean quads) is not done; the low-poly is automatic triangle reduction via glTF Transform. Open-source AI retopology models found were too coarse or too large for this machine.
+- **Vite dev server watches the project folder**; `tools/` is excluded in `vite.config.ts` because the watcher locked directories during Python installs.
+- **Licences:** check Tencent's Hunyuan3D licence and Meshy's terms before publishing. The Vanduul design and Star Citizen logo on the character sheet belong to Cloud Imperium Games.
+- An encrypted Meshy preview file was not decrypted; the proper export was used instead.

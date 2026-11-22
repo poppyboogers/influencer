@@ -1,0 +1,42 @@
+{
+  "comment": "Face tuning for the webcam app. Saving this file reloads the app. 'gain' = how strongly your expression drives the model's shape of that name (higher = reacts sooner and further, 0 = off). 'limit' = the furthest that shape may go, 0 to 1 (1 = the full modelled shape). A name covers everything starting with it: eyeBlink covers eyeBlinkLeft and eyeBlinkRight. Shapes not listed use gain 1.5, limit 1.",
+  "gain": {
+    "eyeBlink": 2.2,
+    "eyeSquint": 1.3,
+    "eyeWide": 2.2,
+    "browDown": 1.6,
+    "browInnerUp": 1.5,
+    "browOuterUp": 1.6,
+    "cheekPuff": 3,
+    "cheekSquint": 1.5,
+    "noseSneer": 3,
+    "mouthSmile": 1.3,
+    "mouthFrown": 2.5,
+    "mouthPucker": 1,
+    "mouthFunnel": 2.2,
+    "mouthLeft": 2.2,
+    "mouthRight": 2.2,
+    "mouthUpperUp": 2.2,
+    "mouthLowerDown": 1.8,
+    "mouthStretch": 2.2,
+    "mouthDimple": 2,
+    "mouthPress": 1.6,
+    "mouthRoll": 1.6,
+    "mouthShrug": 1.6
+  },
+  "limit": {
+    "mouthPucker": 1,
+    "mouthFunnel": 1,
+    "eyeBlink": 1
+  },
+  "jawComment": "The lower jaw also opens with the measured gap between your lips, so the teeth part when you talk. 'fromLips' = how far the jaw drops for a given lip gap (about 2 matches your real opening, higher exaggerates, 0 = off). 'lipDeadZone' = how far the lips must part before the jaw starts to move (raise it if the jaw bobs while your mouth is shut).",
+  "jaw": {
+    "fromLips": 2.2,
+    "lipDeadZone": 0.012
+  },
+  "landmarksComment": "Nose scrunch and brow frown are also measured directly from the face landmarks, because the tracker's own scores for them barely move. Higher = reacts to a smaller scrunch / frown, 0 = off. Press C with a relaxed face so the app knows your relaxed measurements.",
+  "landmarks": {
+    "noseScrunch": 10,
+    "browFrown": 8
+  }
+}

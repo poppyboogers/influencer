@@ -1,0 +1,171 @@
+{
+  "source": "vanduude-lowpoly-ver1.prepared.glb",
+  "output": "vanduude.rigged.glb",
+  "weights": "vanduude.weights.json",
+  "rebuildComment": "Used by 'npm run rebuild -- vanduude' after the model is edited in Blender: 'export' is the GLB exported from Blender, 'blend' the Blender file the vertex groups are read from.",
+  "export": "vanduude-lowpoly-ver1.glb",
+  "blend": "vanduude-lowpoly-reedit.blend",
+  "refineComment": "The exported face has too few points around the eyes, brows and nose for expressions to show (4 points per eye). 'npm run rebuild' splits every triangle inside this box into four, 'levels' times over; the surface keeps its exact shape. The box stops above the upper lip so the mouth is untouched. Remove this if the face is subdivided in Blender instead.",
+  "refine": { "object": "lowpoly", "levels": 2, "x": [-0.11, 0.11], "y": [2.055, 2.17], "z": [0.02, 1] },
+  "comment": "Coordinates are in model units: x = character's left, y = up (feet at 0), z = forward. Bones marked mirror are copied to the right side with x negated. Measured on vanduude-lowpoly-ver1 (aloha shirt, A-pose arms, mouth modelled open, separate teeth and hair objects). The source is made by: npm run rebuild -- vanduude",
+  "smoothIterations": 5,
+
+  "mouthComment": "The mouth is modelled open. restOpen = how far (radians) the jaw turns back up when the tracked mouth is closed. planeY = height of the mouth corners: below it is lower jaw. bodyZ = the jaw's hold on the skin grows from nothing at the joint (first number, depth z) to full (second). cornerZ = depth of the mouth corners: behind it the skin within cornerBand [above, below] the mouth line shares the jaw movement (half at the corner), in front of it (over cornerFade) the lower lip is fully on the jaw and the upper lip on the head. fadeY / maxAbsX = where the hold fades out under the chin and at the sides. fadeZ is only used when bodyZ is removed (old chin-only weighting).",
+  "mouth": {
+    "cut": false,
+    "interior": false,
+    "restOpen": 0.34,
+    "planeY": 2.012,
+    "minZ": 0.085,
+    "maxAbsX": 0.09,
+    "fadeZ": [0.082, 0.142],
+    "bodyZ": [0.02, 0.075],
+    "cornerZ": 0.09,
+    "cornerFade": 0.035,
+    "cornerBand": [0.04, 0.02],
+    "fadeY": [1.9, 1.935]
+  },
+
+  "partsComment": "An object whose name matches is treated as that part: 'soft' parts are simulated, 'bone' parts are fixed rigidly to one bone. First match wins. Objects that match nothing are the body. In this model 'teeth.bottom.001' is the upper row. 'offset' [x, y, z] moves the whole object by that much before rigging (y = up); the upper teeth and upper gums are raised 0.006 (the teeth are 0.026 tall).",
+  "parts": [
+    { "match": "hair|dread|tentacle", "soft": "hair" },
+    { "match": "teeth\\.bottom\\.001|teeth.*(upper|top)", "bone": "head", "offset": [0, 0.006, 0] },
+    { "match": "gums?.*(upper|top)", "bone": "head", "offset": [0, 0.006, 0] },
+    { "match": "gums?", "bone": "jaw" },
+    { "match": "teeth|tooth", "bone": "jaw" },
+    { "match": "glasses|shades", "bone": "head" }
+  ],
+
+  "softComment": "type 'body' = keeps its modelled shape and wobbles around it (not cloth). 'points' = number of control points, 'links' = springs per control point, 'base' = the only ordinary bones the part may follow. 'softness' says where it is held: either a Blender vertex group saved in the weights file (0 = held, 1 = fully soft) or 'pin' boxes with a 'fade' distance. 'select' is used only while the part is not a separate object: texture colour inside the boxes. sim: 'follow' = pull back to the modelled shape per step (higher = stiffer), 'stiffness' = spring strength, 'maxOffset' = furthest a point may drift.",
+  "soft": [
+    {
+      "name": "shirt", "type": "body", "parent": "chest", "points": 56, "links": 5,
+      "base": ["hips", "spine", "chest", "neck", "leftShoulder", "rightShoulder", "leftUpperArm", "rightUpperArm"],
+      "select": {
+        "color": "fabric", "limit": 30, "fill": 3, "fillHoles": true, "pieces": 1,
+        "boxes": [
+          { "y": [1.47, 1.92] },
+          { "y": [1.215, 1.47], "absX": [0, 0.29] },
+          { "y": [1.095, 1.215], "absX": [0.085, 0.29] },
+          { "y": [1.095, 1.215], "absX": [0, 0.29], "z": [-1, -0.02] }
+        ]
+      },
+      "softness": { "pin": [{ "y": [1.74, 2] }], "fade": 0.4 },
+      "sim": { "gravity": 0.8, "damping": 0.1, "follow": 0.4, "stiffness": 1.0, "wind": 0.1, "maxOffset": 0.025 }
+    },
+    {
+      "name": "hair", "type": "body", "parent": "head", "points": 64, "links": 4,
+      "base": ["head"],
+      "softness": { "object": "hair", "group": "hair.weight" },
+      "sim": { "gravity": 4.0, "damping": 0.05, "follow": 0.025, "stiffness": 1.0, "wind": 0.06, "maxOffset": 0.3 }
+    }
+  ],
+
+  "collidersComment": "Capsules the soft parts cannot pass through, from one bone to another (or to an offset from the first bone).",
+  "colliders": [
+    { "from": "hips", "to": "chest", "radius": 0.15 },
+    { "from": "chest", "to": "neck", "radius": 0.16 },
+    { "from": "neck", "to": "head", "radius": 0.085 },
+    { "from": "head", "offset": [0, 0.15, 0.04], "radius": 0.1 },
+    { "from": "leftShoulder", "to": "leftUpperArm", "radius": 0.1, "mirror": true },
+    { "from": "leftUpperArm", "to": "leftLowerArm", "radius": 0.065, "mirror": true },
+    { "from": "leftLowerArm", "to": "leftHand", "radius": 0.05, "mirror": true }
+  ],
+
+  "bonesComment": "'detached': the bone still moves with its parent, but starts at its own place rather than at the parent's joint (each toe starts at its own base, in line with the toe), and no connecting line is drawn.",
+  "bones": [
+    { "name": "hips", "pos": [0, 1.06, -0.01], "tail": [0, 1.22, -0.01] },
+    { "name": "spine", "parent": "hips", "pos": [0, 1.24, -0.015], "tail": [0, 1.44, -0.03] },
+    { "name": "chest", "parent": "spine", "pos": [0, 1.46, -0.03], "tail": [0, 1.74, -0.06] },
+    { "name": "neck", "parent": "chest", "pos": [0, 1.8, -0.07], "tail": [0, 1.94, -0.045] },
+    { "name": "head", "parent": "neck", "pos": [0, 1.96, -0.04], "tail": [0, 2.22, 0.0] },
+
+    { "name": "jaw", "parent": "head", "pos": [0, 2.02, 0.02], "tail": [0, 1.96, 0.14], "face": "jaw" },
+
+    { "name": "leftShoulder", "parent": "chest", "pos": [0.08, 1.7, -0.06], "tail": [0.24, 1.66, -0.06], "side": true, "mirror": true },
+    { "name": "leftUpperArm", "parent": "leftShoulder", "pos": [0.27, 1.64, -0.06], "tail": [0.415, 1.31, 0.005], "side": true, "mirror": true,
+      "keepComment": "Only points outside the slanted line that runs down from the armpit (x 0.215, y 1.51) through the gap between sleeve and torso belong to the arm: x + 0.427 y > 0.86. Measured from cross-sections of the mesh.",
+      "keep": { "normal": [1, 0.427, 0], "offset": 0.86 } },
+    { "name": "leftLowerArm", "parent": "leftUpperArm", "pos": [0.415, 1.31, 0.005], "tail": [0.495, 1.13, 0.095], "side": true, "mirror": true,
+      "keep": { "normal": [1, 0.427, 0], "offset": 0.86 } },
+    { "name": "leftHand", "parent": "leftLowerArm", "pos": [0.495, 1.13, 0.095], "tail": [0.52, 0.98, 0.12], "side": true, "mirror": true },
+
+    { "name": "leftThumb1", "parent": "leftHand", "pos": [0.458, 1.03, 0.165], "tail": [0.44, 0.99, 0.2], "side": true, "mirror": true, "smooth": 1, "reach": 0.05 },
+    { "name": "leftThumb2", "parent": "leftThumb1", "pos": [0.44, 0.99, 0.2], "tail": [0.42, 0.955, 0.232], "side": true, "mirror": true, "smooth": 1, "reach": 0.05 },
+    { "name": "leftIndex1", "parent": "leftHand", "pos": [0.522, 0.98, 0.144], "tail": [0.51, 0.905, 0.144], "side": true, "mirror": true, "smooth": 1, "reach": 0.05 },
+    { "name": "leftIndex2", "parent": "leftIndex1", "pos": [0.51, 0.905, 0.144], "tail": [0.496, 0.832, 0.144], "side": true, "mirror": true, "smooth": 1, "reach": 0.05 },
+    { "name": "leftPinky1", "parent": "leftHand", "pos": [0.52, 0.965, 0.084], "tail": [0.505, 0.92, 0.066], "side": true, "mirror": true, "smooth": 1, "reach": 0.05 },
+    { "name": "leftPinky2", "parent": "leftPinky1", "pos": [0.505, 0.92, 0.066], "tail": [0.488, 0.876, 0.048], "side": true, "mirror": true, "smooth": 1, "reach": 0.05 },
+
+    { "name": "leftUpperLeg", "parent": "hips", "pos": [0.13, 1.02, 0.0], "tail": [0.18, 0.74, 0.02], "side": true, "leg": true, "mirror": true },
+    { "name": "leftLowerLeg", "parent": "leftUpperLeg", "pos": [0.18, 0.73, 0.02], "tail": [0.26, 0.36, -0.15], "side": true, "leg": true, "mirror": true },
+    { "name": "leftFoot", "parent": "leftLowerLeg", "pos": [0.26, 0.35, -0.15], "tail": [0.29, 0.07, -0.02], "side": true, "leg": true, "mirror": true },
+    { "name": "leftToes", "parent": "leftFoot", "pos": [0.29, 0.07, -0.02], "tail": [0.29, 0.05, 0.03], "side": true, "leg": true, "mirror": true, "smooth": 3 },
+    { "name": "leftToeInner1", "parent": "leftToes", "detached": true, "pos": [0.2, 0.06, -0.01], "tail": [0.195, 0.04, 0.07], "side": true, "leg": true, "mirror": true, "smooth": 2, "reach": 0.06 },
+    { "name": "leftToeInner2", "parent": "leftToeInner1", "pos": [0.195, 0.04, 0.07], "tail": [0.19, 0.02, 0.14], "side": true, "leg": true, "mirror": true, "smooth": 2, "reach": 0.06 },
+    { "name": "leftToeMiddle1", "parent": "leftToes", "detached": true, "pos": [0.295, 0.06, 0.0], "tail": [0.297, 0.04, 0.09], "side": true, "leg": true, "mirror": true, "smooth": 2, "reach": 0.06 },
+    { "name": "leftToeMiddle2", "parent": "leftToeMiddle1", "pos": [0.297, 0.04, 0.09], "tail": [0.298, 0.02, 0.18], "side": true, "leg": true, "mirror": true, "smooth": 2, "reach": 0.06 },
+    { "name": "leftToeOuter1", "parent": "leftToes", "detached": true, "pos": [0.378, 0.06, -0.03], "tail": [0.385, 0.04, 0.04], "side": true, "leg": true, "mirror": true, "smooth": 2, "reach": 0.06 },
+    { "name": "leftToeOuter2", "parent": "leftToeOuter1", "pos": [0.385, 0.04, 0.04], "tail": [0.39, 0.02, 0.1], "side": true, "leg": true, "mirror": true, "smooth": 2, "reach": 0.06 }
+  ],
+
+  "morphsComment": "Facial expression shapes, named like the face tracker's signals so the app can drive them directly. Each is a list of pushes: 'at' = centre, 'r' = radius, 'move' = how far the surface moves there, 'curl' = roll the surface around a left-right line through the centre (radians; used to purse the lips), or 'squash' = flatten toward the centre along 'axis' (1 = fully closed, negative = widen). 'lip' limits a push to the upper or lower lip, 'mirror' repeats it on the other side, 'sides' builds a Left and a Right version.",
+  "morphs": [
+    { "name": "mouthSmile", "sides": true, "ops": [
+      { "at": [0.053, 2.013, 0.09], "r": 0.026, "move": [0.01, 0.016, -0.012] },
+      { "at": [0.075, 2.045, 0.075], "r": 0.035, "move": [0.004, 0.007, 0] } ] },
+    { "name": "mouthFrown", "sides": true, "ops": [
+      { "at": [0.053, 2.013, 0.09], "r": 0.026, "move": [0.003, -0.016, -0.003] } ] },
+    { "name": "mouthStretch", "sides": true, "ops": [
+      { "at": [0.053, 2.013, 0.09], "r": 0.028, "move": [0.012, -0.005, -0.012] } ] },
+    { "name": "mouthDimple", "sides": true, "ops": [
+      { "at": [0.053, 2.013, 0.09], "r": 0.02, "move": [0.006, 0.002, -0.008] } ] },
+    { "name": "mouthPucker", "comment": "Kiss: corners drawn in toward the middle (stopping outside the teeth, which do not deform), both lips pushed forward and bunched together, then pursed: the 'curl' pushes roll the top lip up and out and the bottom lip down and out. Bigger curl numbers = more pursing. Radii are small so the jaw sides stay put. 'guardTeeth' holds the floor and roof of the mouth behind the teeth still, so they do not rise or drop over the teeth.", "guardTeeth": true, "ops": [
+      { "at": [0.062, 2.013, 0.088], "r": 0.02, "move": [-0.017, 0, 0.007], "mirror": true },
+      { "at": [0.036, 2.03, 0.13], "r": 0.018, "move": [-0.012, -0.004, 0.012], "lip": "upper", "mirror": true },
+      { "at": [0.036, 1.995, 0.125], "r": 0.018, "move": [-0.012, 0.005, 0.012], "lip": "lower", "mirror": true },
+      { "at": [0, 2.035, 0.155], "r": 0.022, "move": [0, -0.005, 0.014], "lip": "upper" },
+      { "at": [0, 1.988, 0.147], "r": 0.022, "move": [0, 0.007, 0.016], "lip": "lower" },
+      { "at": [0, 2.052, 0.148], "r": 0.024, "curl": -0.7, "lip": "upper" },
+      { "at": [0.03, 2.048, 0.13], "r": 0.02, "curl": -0.45, "lip": "upper", "mirror": true },
+      { "at": [0, 1.968, 0.138], "r": 0.024, "curl": 0.7, "lip": "lower" },
+      { "at": [0.03, 1.972, 0.12], "r": 0.02, "curl": 0.45, "lip": "lower", "mirror": true } ] },
+    { "name": "mouthFunnel", "ops": [
+      { "at": [0.053, 2.013, 0.09], "r": 0.03, "move": [-0.014, 0, 0.01], "mirror": true },
+      { "at": [0, 2.035, 0.155], "r": 0.032, "move": [0, 0.007, 0.012], "lip": "upper" },
+      { "at": [0, 1.988, 0.147], "r": 0.032, "move": [0, -0.008, 0.014], "lip": "lower" } ] },
+    { "name": "mouthLeft", "ops": [ { "at": [0, 2.012, 0.135], "r": 0.045, "move": [0.014, 0, 0] } ] },
+    { "name": "mouthRight", "ops": [ { "at": [0, 2.012, 0.135], "r": 0.045, "move": [-0.014, 0, 0] } ] },
+    { "name": "mouthUpperUp", "sides": true, "ops": [
+      { "at": [0.03, 2.03, 0.14], "r": 0.026, "move": [0, 0.014, -0.003], "lip": "upper" } ] },
+    { "name": "mouthLowerDown", "sides": true, "ops": [
+      { "at": [0.03, 1.992, 0.132], "r": 0.026, "move": [0, -0.013, 0], "lip": "lower" } ] },
+    { "name": "mouthPress", "sides": true, "ops": [
+      { "at": [0.03, 2.03, 0.14], "r": 0.026, "move": [0, -0.007, -0.002], "lip": "upper" },
+      { "at": [0.03, 1.992, 0.132], "r": 0.026, "move": [0, 0.008, -0.002], "lip": "lower" } ] },
+    { "name": "mouthRollUpper", "ops": [ { "at": [0, 2.033, 0.15], "r": 0.04, "move": [0, -0.008, -0.01], "lip": "upper" } ] },
+    { "name": "mouthRollLower", "ops": [ { "at": [0, 1.99, 0.142], "r": 0.04, "move": [0, 0.008, -0.01], "lip": "lower" } ] },
+    { "name": "mouthShrugUpper", "ops": [ { "at": [0, 2.035, 0.155], "r": 0.04, "move": [0, 0.008, 0.004], "lip": "upper" } ] },
+    { "name": "mouthShrugLower", "ops": [
+      { "at": [0, 1.988, 0.147], "r": 0.04, "move": [0, 0.01, 0.006], "lip": "lower" },
+      { "at": [0, 1.95, 0.135], "r": 0.03, "move": [0, 0.006, 0.004], "lip": "lower" } ] },
+    { "name": "cheekPuff", "ops": [ { "at": [0.075, 2.03, 0.07], "r": 0.04, "move": [0.016, 0, 0.006], "mirror": true } ] },
+    { "name": "cheekSquint", "sides": true, "ops": [ { "at": [0.07, 2.068, 0.09], "r": 0.028, "move": [0, 0.009, 0.002] } ] },
+    { "name": "noseSneer", "sides": true, "comment": "Nose scrunch: side of the nose and the cheek beside it pulled up, inner brow pulled down. Kept off the lips.", "ops": [
+      { "at": [0.02, 2.085, 0.145], "r": 0.022, "move": [0.004, 0.016, -0.005] },
+      { "at": [0.045, 2.074, 0.135], "r": 0.02, "move": [0, 0.017, 0.003] },
+      { "at": [0.022, 2.124, 0.134], "r": 0.02, "move": [-0.002, -0.008, 0.003] } ] },
+    { "name": "browDown", "sides": true, "comment": "Frown: the whole brow comes down and in, the inner end furthest.", "ops": [
+      { "at": [0.05, 2.12, 0.118], "r": 0.034, "move": [-0.0045, -0.0108, 0.0036] },
+      { "at": [0.022, 2.116, 0.136], "r": 0.024, "move": [-0.0036, -0.0063, 0.0027] } ] },
+    { "name": "browInnerUp", "ops": [ { "at": [0.022, 2.118, 0.135], "r": 0.028, "move": [0, 0.015, 0], "mirror": true } ] },
+    { "name": "browOuterUp", "sides": true, "ops": [ { "at": [0.08, 2.118, 0.09], "r": 0.03, "move": [0, 0.015, 0] } ] },
+    { "name": "eyeBlink", "sides": true, "ops": [ { "at": [0.054, 2.098, 0.109], "r": 0.022, "squash": 1.8, "axis": "y" } ] },
+    { "name": "eyeSquint", "sides": true, "ops": [
+      { "at": [0.054, 2.098, 0.109], "r": 0.022, "squash": 0.5, "axis": "y" },
+      { "at": [0.06, 2.08, 0.1], "r": 0.022, "move": [0, 0.004, 0] } ] },
+    { "name": "eyeWide", "sides": true, "ops": [ { "at": [0.054, 2.098, 0.109], "r": 0.02, "squash": -0.6, "axis": "y" } ] },
+    { "name": "bodyShrug", "sides": true, "clothes": true, "comment": "Not a face shape: the app turns it on as the shoulder rises in a shrug. The muscle between neck and shoulder bunches up and out against the neck, and the collar rises with it. Shapes whose names start with 'body' are driven by the body, never by the face tracker.", "ops": [
+      { "at": [0.15, 1.84, -0.06], "r": 0.075, "move": [0.028, 0.05, -0.005] } ] }
+  ]
+}
