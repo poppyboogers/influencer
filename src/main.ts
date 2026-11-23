@@ -3,6 +3,7 @@ import { MathUtils } from 'three';
 import { createBodyTracker, type ArmSample, type BodySample, type BodyTracker, type Vec3 } from './body';
 import { startCamera, type CameraSession } from './camera';
 import { characterUrl, loadCharacters, showPicker, type CharacterInfo } from './characters';
+import { FV_SOUND, createFvListener, type FvListener, type FvSound } from './fricative';
 import { createHandTracker, type HandSample, type HandTracker } from './hands';
 import { createRigAvatar, type ArmPose, type HandPose, type RigPose } from './rigAvatar';
 import { OneEuro, Steady, clamp, ease } from './smoothing';
@@ -22,6 +23,18 @@ const messageEl = document.querySelector<HTMLDivElement>('#message')!;
 function showMessage(text: string) {
   messageEl.textContent = text;
   messageEl.hidden = false;
+}
+
+/** Dev server only: adds a line to the test log (see debugLog in vite.config.ts). */
+function report(text: string) {
+  if (!import.meta.env.DEV) return;
+  void fetch('/api/debuglog', { method: 'POST', body: `${new Date().toISOString().slice(11, 23)} # ${text}` }).catch(() => {});
+}
+if (import.meta.env.DEV) {
+  report(`page opened: ${location.search}`);
+  window.addEventListener('error', (e) => report(`ERROR ${e.message} at ${e.filename}:${e.lineno}`));
+  window.addEventListener('unhandledrejection', (e) => report(`ERROR (promise) ${String(e.reason)}`));
+  document.addEventListener('visibilitychange', () => report(`tab ${document.visibilityState}`));
 }
 
 const CALIBRATION_KEY = 'mocap.calibration';
@@ -104,6 +117,39 @@ const LIP_GATE = [0.02, 0.07] as const;
  */
 const JAW_FROM_LIPS = { deadZone: 0.012, gain: 4.5, steady: 0.008 };
 /**
+ * The "f / v" trigger: lower lip tucked under the upper teeth. It fires only while BOTH are true:
+ * the face tracker sees the lower lip pushed up against the top teeth, and the microphone hears
+ * an "f" hiss or a "v" voice (see fricative.ts). While it fires, the model's mouthRollLower shape
+ * (lower lip rolled in) is driven directly by the trigger, and its mouthShrugLower shape (lower
+ * lip pushed up and forward) is faded out so the two do not fight.
+ *
+ * The lip half is "the lips are together" (the measured gap between the inner lips, geoMouth),
+ * not a lip-roll score. Measured on the operator's face (bearded, 24 November, four logged
+ * tests): no tracker score separates an "f" from a resting closed mouth. mouthRollLower reads
+ * 0.03 during an "f" and 0.15 at rest (the wrong way round), and mouthShrugLower reads about 0.5
+ * for both. What does hold is that the lips stay together through an "f" or "v" (gap about
+ * 0.013) while an "s" or a vowel parts them, so lips together + the sound is the test.
+ *   strength: how far the roll shape goes while the trigger is fully on, 0..1 (0 = trigger off,
+ *             microphone not opened)
+ *   lips:     lip gap as a fraction of the outer-eye-corner distance: [fully on at or below,
+ *             off at or above]
+ *   voiced:   how far a voice alone (no hiss) opens the trigger, 0..1; this is what lets "v"
+ *             through (and "m" / "b", which are also voiced with the lips together)
+ *   release:  seconds the trigger stays on after the sound stops (the picture lags the sound)
+ * Overridden by "fv" in the character's face.json, which may also carry the microphone levels
+ * "hiss", "tilt" and "voice" (each [from, to] in decibels, see FV_SOUND in fricative.ts).
+ */
+const FV = { strength: 1, jaw: 0.5, lips: [0.022, 0.035] as readonly [number, number], voiced: 0.7, release: 0.25 };
+/**
+ * The model shape the trigger drives: mouthFV when the model has it (lower lip up and rolled back
+ * over the lower teeth, upper lip lifted; made for this and driven by nothing else), otherwise
+ * the plain lower-lip roll. With mouthFV the jaw also opens by FV.jaw (0..1 of full travel) while
+ * the trigger fires, so the upper teeth come to rest on the raised lip instead of the mouth
+ * sealing shut. FV_LIP is the model shape faded out while it fires (it pushes the lip forward).
+ */
+const FV_SHAPES = ['mouthFV', 'mouthRollLower'];
+const FV_LIP = 'mouthShrugLower';
+/**
  * Per-character overrides from characters/<id>/<id>.face.json (optional). Saving that file reloads the app
  * (on the dev server; on the hosted site, upload the new file and reload the page).
  *   gain:  how strongly a tracker signal drives the shape (0 switches the shape off)
@@ -117,6 +163,17 @@ interface FaceTuning {
   landmarks?: { noseScrunch?: number; browFrown?: number };
   /** Jaw opening taken from the measured lip gap (see JAW_FROM_LIPS). */
   jaw?: { fromLips?: number; lipDeadZone?: number };
+  /** The "f / v" trigger (see FV). */
+  fv?: {
+    strength?: number;
+    jaw?: number;
+    lips?: [number, number];
+    voiced?: number;
+    release?: number;
+    hiss?: [number, number];
+    tilt?: [number, number];
+    voice?: [number, number];
+  };
 }
 let tuning: FaceTuning = {};
 const tuned = (table: Record<string, number> | undefined, name: string) => {
@@ -286,6 +343,36 @@ async function main() {
       }
     }
   }
+  // The "f / v" trigger needs the microphone; only asked for when this model has the shape.
+  const fv = { ...FV, ...tuning.fv };
+  let fvListener: FvListener | null = null;
+  let fvProblem = '';
+  const FV_SHAPE = FV_SHAPES.find((name) => avatar.shapeNames.includes(name)) ?? '';
+  const fvWanted = fv.strength > 0 && FV_SHAPE !== '';
+  /** How far the jaw opens while the trigger fires (only with the purpose-made shape). */
+  const fvJaw = FV_SHAPE === FV_SHAPES[0] ? fv.jaw : 0;
+  if (fvWanted && !demo) {
+    // Not waited for: the avatar starts moving at once and the trigger joins in when the
+    // microphone has been allowed.
+    report('microphone: asking');
+    createFvListener({
+      hiss: tuning.fv?.hiss ?? FV_SOUND.hiss,
+      tilt: tuning.fv?.tilt ?? FV_SOUND.tilt,
+      voice: tuning.fv?.voice ?? FV_SOUND.voice,
+    }).then(
+      (listener) => {
+        fvListener = listener;
+        report(`microphone: open (${listener.label})`);
+      },
+      (err: unknown) => {
+        console.warn('Microphone unavailable, the f / v trigger is off:', err);
+        fvProblem = 'no microphone (permission denied or none found)';
+        report(`microphone: failed (${String(err)})`);
+      },
+    );
+  } else {
+    report(`f / v trigger not started: demo ${demo}, strength ${fv.strength}, model shape: ${FV_SHAPE || 'none'}`);
+  }
 
   // --- state -------------------------------------------------------------
   let calibration = loadCalibration();
@@ -345,9 +432,17 @@ async function main() {
   /** When the hand tracker last found a hand at the body tracker's wrist (the operator's own left / right). */
   const handAtWrist = { left: -Infinity, right: -Infinity };
   const torsoFilter = new TorsoFilter();
+  /** The f / v trigger: the last microphone reading, the held sound level, the lip level and the two together. */
+  let fvSound: FvSound | null = null;
+  let fvHeard = 0;
+  let fvLip = 0;
+  let fvLevel = 0;
+  const fvLog: string[] = [];
+  let fvLogged = 0;
 
   window.addEventListener('keydown', (e) => {
     const key = e.key.toLowerCase();
+    if (key === 'c') report(`C pressed (face ${lastRaw ? 'seen' : 'not seen yet'})`);
     if (key === 'c' && lastRaw) {
       calibration = {
         yaw: lastRaw.yaw,
@@ -496,7 +591,8 @@ async function main() {
       jawFromLips = clamp((gap - deadZone) * (tuning.jaw?.fromLips ?? JAW_FROM_LIPS.gain), 0, 1);
     }
     const jawFromScore = clamp((jawSteady.follow(b.jawOpen ?? 0) - calibration.jaw - 0.03) * 1.8, 0, 1) * lipsApart;
-    const jaw = Math.max(jawFromScore, jawFromLips);
+    // fvLevel is from the previous frame here, which is close enough: it is held and smoothed.
+    const jaw = Math.max(jawFromScore, jawFromLips, fvWanted ? fvLevel * fvJaw : 0);
 
     // The operator's own left/right. Brows: raised is positive, frowning negative.
     const brow = (side: 'Left' | 'Right') =>
@@ -524,10 +620,18 @@ async function main() {
       const base = relaxed[key] ?? (firstSeen[key] ??= now);
       return Math.max(0, (base - now) / base - LANDMARK_DEAD_ZONE);
     };
+    // The f / v trigger: the lip has to be rolled in AND the microphone has to hear the sound.
+    const lipT = b.geoMouth === undefined ? 0 : clamp((fv.lips[1] - b.geoMouth) / (fv.lips[1] - fv.lips[0]), 0, 1);
+    fvLip = lipT * lipT * (3 - 2 * lipT);
+    fvLevel = fvHeard * fvLip;
     const signal = (name: string) => {
       const source = mirror ? swapSides(name) : name;
       const side = source.endsWith('Left') ? 'Left' : 'Right';
       let value = Math.max(0, (steadied(name, b[source] ?? 0) - (relaxed[source] ?? 0) - SHAPE_DEAD_ZONE) * gainOf(name));
+      if (fvWanted) {
+        if (name === FV_SHAPE) value = Math.max(value, fvLevel * fv.strength);
+        if (name === FV_LIP) value *= 1 - fvLevel;
+      }
       if (gainOf(name) > 0) {
         if (name.startsWith('noseSneer')) value += shrink(`geoNose${side}`) * LANDMARK_GAIN.noseScrunch;
         if (name.startsWith('browDown')) value += shrink(`geoBrow${side}`) * LANDMARK_GAIN.browFrown;
@@ -593,6 +697,32 @@ async function main() {
     const dt = Math.min(0.1, (now - lastFrame) / 1000);
     lastFrame = now;
     if (dt > 0) fps = ease(fps, 1 / dt, dt, 0.5);
+
+    // Microphone: rises at once with the sound, then lets go over `release` seconds.
+    if (fvListener) {
+      fvSound = fvListener.read(now);
+      fvHeard = Math.max(fvSound.hiss, fvSound.voice * fv.voiced, fvHeard - dt / Math.max(0.01, fv.release));
+    }
+    // Dev server only: report the f / v numbers ten times a second so a test can be watched from outside.
+    if (import.meta.env.DEV && fvWanted && !demo && now - fvLogged > 100) {
+      fvLogged = now;
+      const n = (v: number | undefined) => (v ?? 0).toFixed(2);
+      fvLog.push(
+        `${new Date().toISOString().slice(11, 23)} trig ${n(fvLevel)} lip ${n(fvLip)} sound ${n(fvHeard)} | lipGap ${(lastRaw?.blend.geoMouth ?? 0).toFixed(3)} ` +
+          `lipGapRelaxed ${(calibration.blend?.geoMouth ?? 0).toFixed(3)} shape ${n(shapes[FV_SHAPE])} | hiss ${n(fvSound?.hiss)} voice ${n(fvSound?.voice)} ` +
+          `rise ${n(fvSound?.rise)} tilt ${n(fvSound?.tilt)} voiceRise ${n(fvSound?.voiceRise)} | ` +
+          `mic ${fvListener ? fvListener.label : fvProblem || 'none'} face ${now - lastSeen < LOST_AFTER_MS ? 'found' : 'lost'} | ` +
+          // Every mouth, jaw and cheek signal the tracker reports, to find which ones mark an "f".
+          `ALL ${JSON.stringify(
+            Object.fromEntries(
+              Object.entries(lastRaw?.blend ?? {})
+                .filter(([name]) => /^(mouth|jaw|cheek|geo|nose)/.test(name))
+                .map(([name, v]) => [name, Math.round(v * 1000) / 1000]),
+            ),
+          )}`,
+      );
+      if (fvLog.length >= 10) void fetch('/api/debuglog', { method: 'POST', body: fvLog.splice(0).join('\n') }).catch(() => {});
+    }
 
     if (demo) {
       consumeFace(demoFace(now / 1000), dt);
@@ -703,6 +833,16 @@ async function main() {
               .map(([name, v]) => `${name} ${v.toFixed(1)}`)
               .join('  ') || 'relaxed'
       }`,
+      ...(fvWanted && !demo
+        ? [
+            `f / v    ${
+              !fvListener || !fvSound
+                ? fvProblem || 'waiting for the microphone (click the page)'
+                : `${fvLevel > 0.5 ? 'TRIGGERED' : 'off      '} ${fvLevel.toFixed(2)}   lips together ${fvLip.toFixed(2)}   sound ${fvHeard.toFixed(2)}` +
+                  `   (hiss +${fvSound.rise.toFixed(0)} dB, tilt ${fvSound.tilt.toFixed(0)}, voice +${fvSound.voiceRise.toFixed(0)} dB)   ${fvListener.label}`
+            }`,
+          ]
+        : []),
       `yaw ${deg(face.yaw)}  pitch ${deg(face.pitch)}  roll ${deg(face.roll)}  jaw ${face.jaw.toFixed(2)}`,
       '',
       `[C] calibrate (sit upright, relaxed face and shoulders)   [M] mirror ${mirror ? 'on' : 'off'}   [B] body ${bodyOn ? 'on' : 'off'}   [F] fingers ${handsOn ? 'on' : 'off'}`,
@@ -713,6 +853,7 @@ async function main() {
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
+  report('trackers loaded, avatar running');
   (window as unknown as { __ready: boolean }).__ready = true;
 }
 

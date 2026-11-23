@@ -145,6 +145,14 @@
       { "at": [0.03, 1.992, 0.132], "r": 0.026, "move": [0, 0.008, -0.002], "lip": "lower" } ] },
     { "name": "mouthRollUpper", "ops": [ { "at": [0, 2.033, 0.15], "r": 0.04, "move": [0, -0.008, -0.01], "lip": "upper" } ] },
     { "name": "mouthRollLower", "ops": [ { "at": [0, 1.99, 0.142], "r": 0.04, "move": [0, 0.008, -0.01], "lip": "lower" } ] },
+    { "name": "mouthFV", "comment": "The 'f / v' mouth, driven only by the f / v trigger (lips together + the sound), never by a tracker score. Built like the kiss (mouthPucker): corners drawn in and both lips pushed forward, but without the outward purse on the bottom lip. Instead the bottom lip rides up in front of the lower teeth until it covers them (tips at y 2.002, front face z 0.138 as modelled) and meets the upper teeth, while the jaw itself stays open (the app holds the jaw at 'jaw' under 'fv' in the face file). The corners also drop a little. The last push holds the chin down so only the lip rises.", "ops": [
+      { "at": [0.062, 2.013, 0.088], "r": 0.02, "move": [-0.012, -0.006, 0.005], "mirror": true },
+      { "at": [0.036, 2.03, 0.13], "r": 0.018, "move": [-0.008, -0.002, 0.008], "lip": "upper", "mirror": true },
+      { "at": [0, 2.035, 0.155], "r": 0.022, "move": [0, 0.002, 0.01], "lip": "upper" },
+      { "at": [0, 2.052, 0.148], "r": 0.024, "curl": -0.4, "lip": "upper" },
+      { "at": [0, 1.988, 0.147], "r": 0.024, "move": [0, 0.022, 0.006], "lip": "lower" },
+      { "at": [0.036, 1.995, 0.125], "r": 0.023, "move": [-0.008, 0.02, 0.008], "lip": "lower", "mirror": true },
+      { "at": [0, 1.952, 0.135], "r": 0.022, "move": [0, -0.007, 0], "lip": "lower" } ] },
     { "name": "mouthShrugUpper", "ops": [ { "at": [0, 2.035, 0.155], "r": 0.04, "move": [0, 0.008, 0.004], "lip": "upper" } ] },
     { "name": "mouthShrugLower", "ops": [
       { "at": [0, 1.988, 0.147], "r": 0.04, "move": [0, 0.01, 0.006], "lip": "lower" },

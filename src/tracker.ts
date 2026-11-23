@@ -106,6 +106,12 @@ export async function createTracker(): Promise<Tracker> {
         // Gap between the inner edges of the lips. Unlike jawOpen it does not rely on the chin
         // outline, which the tracker places poorly under a beard.
         blend.geoMouth = dist(13, 14) / eyes;
+        // Lip measurements for the "f / v" mouth (lower lip tucked under the top teeth):
+        // visible height of the lower lip and of the upper lip, lower lip to chin, mouth width.
+        blend.geoLipLower = dist(14, 17) / eyes;
+        blend.geoLipUpper = dist(0, 13) / eyes;
+        blend.geoLipChin = dist(17, 152) / eyes;
+        blend.geoLipWidth = dist(61, 291) / eyes;
       }
 
       return { yaw: euler.y, pitch: euler.x, roll: euler.z, blend, head };

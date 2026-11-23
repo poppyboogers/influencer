@@ -34,6 +34,14 @@
     "fromLips": 2.2,
     "lipDeadZone": 0.012
   },
+  "fvComment": "The 'f / v' trigger (lower lip under the top teeth). It fires only while the tracker sees your lips together AND the microphone hears an 'f' hiss or a 'v' voice; while it fires, the model makes its 'f / v' mouth (the mouthFV shape: like the kiss, but the bottom lip rides up to cover the bottom teeth and the corners drop a little) by 'strength', 0 to 1, and the jaw is held open by 'jaw' (0 to 1 of full travel) so the chin stays down while the lip rises. 'strength' 0 = off, and the microphone is not opened. More 'jaw' drops the chin further and shows more of the top teeth; less closes the mouth. 'lips' = the gap between your lips that counts as together: [fully on at or below, off at or above] (your 'f' measures about 0.013; raise both if it never fires, lower both if it fires on 's' or on vowels). 'voiced' = how far a voice with no hiss opens it, 0 to 1 (this lets 'v' through; 0 = 'f' only). 'release' = seconds it stays on after the sound stops. Press H to see the live 'f / v' line with the numbers.",
+  "fv": {
+    "strength": 1,
+    "jaw": 0.5,
+    "lips": [0.022, 0.035],
+    "voiced": 0.7,
+    "release": 0.25
+  },
   "landmarksComment": "Nose scrunch and brow frown are also measured directly from the face landmarks, because the tracker's own scores for them barely move. Higher = reacts to a smaller scrunch / frown, 0 = off. Press C with a relaxed face so the app knows your relaxed measurements.",
   "landmarks": {
     "noseScrunch": 10,

@@ -1,5 +1,7 @@
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { defineConfig, type Plugin } from 'vite';
 import { listCharacters } from './scripts/characters.mjs';
 
@@ -63,8 +65,29 @@ function characterList(): Plugin {
   };
 }
 
+/**
+ * Lets the running app report what it measures while someone tests it (dev server only):
+ * POST /api/debuglog appends the text sent to mocap-debug.log in the system temp folder.
+ */
+function debugLog(): Plugin {
+  const file = path.join(os.tmpdir(), 'mocap-debug.log');
+  return {
+    name: 'debug-log',
+    configureServer(server) {
+      server.middlewares.use('/api/debuglog', (req, res) => {
+        let body = '';
+        req.on('data', (chunk) => (body += chunk));
+        req.on('end', () => {
+          fs.appendFileSync(file, body.endsWith('\n') ? body : body + '\n');
+          res.end('ok');
+        });
+      });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [jointEditor(), characterList()],
+  plugins: [jointEditor(), characterList(), debugLog()],
   server: {
     watch: {
       // The Python environment and model cache live in tools/. Watching them is slow and,
