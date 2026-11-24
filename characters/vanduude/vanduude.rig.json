@@ -109,7 +109,7 @@
     { "name": "leftToeOuter2", "parent": "leftToeOuter1", "pos": [0.385, 0.04, 0.04], "tail": [0.39, 0.02, 0.1], "side": true, "leg": true, "mirror": true, "smooth": 2, "reach": 0.06 }
   ],
 
-  "morphsComment": "Facial expression shapes, named like the face tracker's signals so the app can drive them directly. Each is a list of pushes: 'at' = centre, 'r' = radius, 'move' = how far the surface moves there, 'curl' = roll the surface around a left-right line through the centre (radians; used to purse the lips), or 'squash' = flatten toward the centre along 'axis' (1 = fully closed, negative = widen). 'lip' limits a push to the upper or lower lip, 'mirror' repeats it on the other side, 'sides' builds a Left and a Right version.",
+  "morphsComment": "Facial expression shapes, named like the face tracker's signals so the app can drive them directly. Each is a list of pushes: 'at' = centre, 'r' = radius, 'move' = how far the surface moves there, 'curl' = roll the surface around a left-right line through the centre (radians; used to purse the lips), or 'squash' = flatten toward the centre along 'axis' (1 = fully closed, negative = widen). 'lip' limits a push to the upper or lower lip, 'mirror' repeats it on the other side, 'sides' builds a Left and a Right version. Entries with 'combo' are corrections, explained on the first of them.",
   "morphs": [
     { "name": "mouthSmile", "sides": true, "ops": [
       { "at": [0.053, 2.013, 0.09], "r": 0.026, "move": [0.01, 0.016, -0.012] },
@@ -159,11 +159,11 @@
       { "at": [0, 1.95, 0.135], "r": 0.03, "move": [0, 0.006, 0.004], "lip": "lower" } ] },
     { "name": "cheekPuff", "ops": [ { "at": [0.075, 2.03, 0.07], "r": 0.04, "move": [0.016, 0, 0.006], "mirror": true } ] },
     { "name": "cheekSquint", "sides": true, "ops": [ { "at": [0.07, 2.068, 0.09], "r": 0.028, "move": [0, 0.009, 0.002] } ] },
-    { "name": "noseSneer", "sides": true, "comment": "Nose scrunch: side of the nose and the cheek beside it pulled up, inner brow pulled down. Kept off the lips.", "ops": [
+    { "name": "noseSneer", "sides": true, "split": 0.02, "comment": "Nose scrunch: side of the nose and the cheek beside it pulled up, inner brow pulled down. Kept off the lips. 'split' = the Left and Right versions fade out across the middle of the face over this distance (half each on the centre line), so together they do not add up to double on the nose bridge.", "ops": [
       { "at": [0.02, 2.085, 0.145], "r": 0.022, "move": [0.004, 0.016, -0.005] },
       { "at": [0.045, 2.074, 0.135], "r": 0.02, "move": [0, 0.017, 0.003] },
       { "at": [0.022, 2.124, 0.134], "r": 0.02, "move": [-0.002, -0.008, 0.003] } ] },
-    { "name": "browDown", "sides": true, "comment": "Frown: the whole brow comes down and in, the inner end furthest.", "ops": [
+    { "name": "browDown", "sides": true, "split": 0.02, "comment": "Frown: the whole brow comes down and in, the inner end furthest.", "ops": [
       { "at": [0.05, 2.12, 0.118], "r": 0.034, "move": [-0.0045, -0.0108, 0.0036] },
       { "at": [0.022, 2.116, 0.136], "r": 0.024, "move": [-0.0036, -0.0063, 0.0027] } ] },
     { "name": "browInnerUp", "ops": [ { "at": [0.022, 2.118, 0.135], "r": 0.028, "move": [0, 0.015, 0], "mirror": true } ] },
@@ -173,6 +173,10 @@
       { "at": [0.054, 2.098, 0.109], "r": 0.022, "squash": 0.5, "axis": "y" },
       { "at": [0.06, 2.08, 0.1], "r": 0.022, "move": [0, 0.004, 0] } ] },
     { "name": "eyeWide", "sides": true, "ops": [ { "at": [0.054, 2.098, 0.109], "r": 0.02, "squash": -0.6, "axis": "y" } ] },
+    { "combo": ["eyeBlink", "noseSneer"], "comment": "Corrections for two shapes that are on together (built as combo_<first>_<second>, Left and Right; the app turns each on by the product of its two shapes). A blink flattens the skin round the eye onto the lid line; a scrunch, frown or cheek raise then pushed that same skin through the line and the face folded into itself with a hard edge. Each of these takes the second shape's movement back out where the blink has flattened the skin. 'amount' (default 1) = how much is taken out." },
+    { "combo": ["eyeBlink", "browDown"] },
+    { "combo": ["eyeBlink", "cheekSquint"] },
+    { "combo": ["eyeBlink", "browOuterUp"] },
     { "name": "bodyShrug", "sides": true, "clothes": true, "comment": "Not a face shape: the app turns it on as the shoulder rises in a shrug. The muscle between neck and shoulder bunches up and out against the neck, and the collar rises with it. Shapes whose names start with 'body' are driven by the body, never by the face tracker.", "ops": [
       { "at": [0.15, 1.84, -0.06], "r": 0.075, "move": [0.028, 0.05, -0.005] } ] }
   ]

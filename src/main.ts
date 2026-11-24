@@ -5,6 +5,7 @@ import { startCamera, type CameraSession } from './camera';
 import { characterUrl, loadCharacters, showPicker, type CharacterInfo } from './characters';
 import { FV_SOUND, createFvListener, type FvListener, type FvSound } from './fricative';
 import { createHandTracker, type HandSample, type HandTracker } from './hands';
+import type { WrinkleConfig } from './wrinkles';
 import { createRigAvatar, type ArmPose, type HandPose, type RigPose } from './rigAvatar';
 import { OneEuro, Steady, clamp, ease } from './smoothing';
 import { TorsoFilter, type TorsoPose } from './torso';
@@ -165,6 +166,10 @@ interface FaceTuning {
   sides?: { strength?: number; deadZone?: number; full?: number };
   /** Jaw opening taken from the measured lip gap (see JAW_FROM_LIPS). */
   jaw?: { fromLips?: number; lipDeadZone?: number };
+  /** Blinking from the measured gap between the eyelids (see BLINK). */
+  blink?: { lids?: [number, number]; shutAt?: number; hold?: number; together?: number };
+  /** Expression wrinkles drawn in the skin's shader (see wrinkles.ts). */
+  wrinkles?: WrinkleConfig;
   /** The "f / v" trigger (see FV). */
   fv?: {
     strength?: number;
@@ -197,6 +202,24 @@ const landmarkGain = () => ({
   lipRaise: tuning.landmarks?.lipRaise ?? 6,
 });
 const LANDMARK_DEAD_ZONE = 0.02;
+/**
+ * Blinking. The tracker's eyeBlink score alone gave no clear blink: it often stops well short of 1
+ * on a real blink, and a blink is over within two or three camera frames. So the gap between the
+ * eyelids is also measured from the face landmarks (geoEyeLeft / geoEyeRight in tracker.ts) and
+ * compared with that eye's usual open gap, which is learned while the app runs (no calibration
+ * needed: it follows a wider eye quickly and a narrower one over about 15 seconds, so looking down
+ * for a while stops counting as closed). The eye takes whichever asks for more, score or lids.
+ *   lids:     how far the lid gap has shrunk, as a fraction of the open gap: [starts closing, fully shut].
+ *             Lower both if blinks are still missed; raise the first if smiling or squinting shuts the eyes.
+ *   shutAt:   at or above this (0..1) the eye snaps fully shut ...
+ *   hold:     ... and stays shut for at least this many seconds from that moment (the shortest blink), so a
+ *             very quick blink is still seen. It is never added on after your eye has reopened.
+ *   together: when both eyes are above this they close together by the larger amount (a wink stays one-sided).
+ * Overridden by "blink" in the character's face.json; lids [1, 1] = lid measurement off.
+ */
+const BLINK = { lids: [0.3, 0.55] as [number, number], shutAt: 0.75, hold: 0.05, together: 0.35 };
+/** Seconds for the learned open-eye gap to come down to a narrower eye. */
+const EYE_OPEN_FORGET = 15;
 /**
  * One-sided mouth expressions. The tracker's Left / Right mouth scores rise and fall together
  * even when only one side of the face moves, so a one-sided snarl or smile came out on both sides
@@ -306,7 +329,7 @@ async function main() {
   overlayEl.textContent = `Loading ${character.name}...`;
   const avatar = await createRigAvatar(canvas, character, (fraction) => {
     overlayEl.textContent = `Loading ${character.name}... ${Math.round(fraction * 100)}%`;
-  });
+    }, tuning.wrinkles);
 
   // Character picker: the button top right, or P.
   let picker: { close(): void } | null = null;
@@ -446,6 +469,12 @@ async function main() {
   /** One-sided mouth expressions: settings, and the last measured lean per measurement (+ = the operator's left). */
   const sides = { ...SIDES, ...tuning.sides };
   const sideLean: Record<string, number> = {};
+  /** Blinking: settings, each eye's learned open lid gap (the operator's own side), and the read-out numbers. */
+  const blink = { ...BLINK, ...tuning.blink };
+  const eyeOpen: Record<string, number> = {};
+  const eyeShut: Record<string, number> = {};
+  const blinkShutUntil: Record<string, number> = {};
+  const blinkOver: Record<string, boolean> = {};
   const jawFilters = { side: new OneEuro(2.0, 0.8), forward: new OneEuro(2.0, 0.8) };
   const jawSteady = new Steady(JAW_STEADY);
   const lipGapSteady = new Steady(JAW_FROM_LIPS.steady);
@@ -678,6 +707,15 @@ async function main() {
     const lipT = b.geoMouth === undefined ? 0 : clamp((fv.lips[1] - b.geoMouth) / (fv.lips[1] - fv.lips[0]), 0, 1);
     fvLip = lipT * lipT * (3 - 2 * lipT);
     fvLevel = fvHeard * fvLip;
+    // Blinking from the eyelids: how far each lid gap has shrunk from that eye's usual open gap.
+    for (const side of ['Left', 'Right'] as const) {
+      const gap = b[`geoEye${side}`];
+      if (gap === undefined) continue;
+      const open = eyeOpen[side] ?? gap;
+      eyeOpen[side] = gap > open ? ease(open, gap, dt, 0.3) : ease(open, gap, dt, EYE_OPEN_FORGET);
+      const shrunk = eyeOpen[side] > 0 ? 1 - gap / eyeOpen[side] : 0;
+      eyeShut[side] = clamp((shrunk - blink.lids[0]) / Math.max(1e-4, blink.lids[1] - blink.lids[0]), 0, 1);
+    }
     const signal = (name: string) => {
       const source = mirror ? swapSides(name) : name;
       const side = source.endsWith('Left') ? 'Left' : 'Right';
@@ -692,12 +730,32 @@ async function main() {
         // A one-sided snarl barely moves the tracker's own score, so the lift of each side of
         // the upper lip is measured too.
         if (name.startsWith('mouthUpperUp')) value += shrink(`geoLipUp${side}`) * LANDMARK_GAIN.lipRaise;
+        if (name.startsWith('eyeBlink')) value = Math.max(value, eyeShut[side] ?? 0);
       }
       if (/(Left|Right)$/.test(source)) value *= sideFactor(name, side);
       return clamp(value, 0, limitOf(name));
     };
+    // Both eyes: a blink closes them together by the larger amount; a wink stays one-sided.
+    const blinkNames = [...shapeFilters.keys()].filter((name) => name.startsWith('eyeBlink'));
+    const blinkWanted = Object.fromEntries(blinkNames.map((name) => [name, signal(name)]));
+    const blinkValues = Object.values(blinkWanted);
+    if (blinkValues.length > 1 && Math.min(...blinkValues) >= blink.together) {
+      for (const name of blinkNames) blinkWanted[name] = Math.max(...blinkValues);
+    }
+    const clock = performance.now();
     for (const [name, filter] of shapeFilters) {
-      shapes[name] = sample.direct ? (sample.direct[name] ?? 0) : clamp(filter.filter(signal(name), dt), 0, 1);
+      if (sample.direct) shapes[name] = sample.direct[name] ?? 0;
+      else if (name in blinkWanted) {
+        // Past `shutAt` the eye snaps fully shut and stays shut for `hold`, so a quick blink shows.
+        // The hold is counted from the moment the eye shuts (a shortest blink length), never added
+        // on after it: the eye reopens as soon as yours does.
+        const over = blinkWanted[name] >= blink.shutAt;
+        if (over && !blinkOver[name]) blinkShutUntil[name] = clock + blink.hold * 1000;
+        blinkOver[name] = over;
+        const shut = over || clock < (blinkShutUntil[name] ?? 0);
+        shapes[name] = clamp(filter.filter(shut ? 1 : blinkWanted[name], dt), 0, 1);
+        if (shut) shapes[name] = limitOf(name);
+      } else shapes[name] = clamp(filter.filter(signal(name), dt), 0, 1);
     }
     face.jawSide = jawFilters.side.filter(signal('jawLeft') - signal('jawRight'), dt);
     face.jawForward = jawFilters.forward.filter(signal('jawForward'), dt);
@@ -774,7 +832,7 @@ async function main() {
           `ALL ${JSON.stringify(
             Object.fromEntries(
               Object.entries(lastRaw?.blend ?? {})
-                .filter(([name]) => /^(mouth|jaw|cheek|geo|nose)/.test(name))
+                .filter(([name]) => /^(mouth|jaw|cheek|geo|nose|eyeBlink|eyeSquint)/.test(name))
                 .map(([name, v]) => [name, Math.round(v * 1000) / 1000]),
             ),
           )}`,
@@ -891,6 +949,17 @@ async function main() {
               .map(([name, v]) => `${name} ${v.toFixed(1)}`)
               .join('  ') || 'relaxed'
       }`,
+      ...(!demo && lastRaw?.blend.geoEyeLeft !== undefined && avatar.shapeNames.some((name) => name.startsWith('eyeBlink'))
+        ? [
+            `blink    ${(['Left', 'Right'] as const)
+              .map((side) => {
+                const raw = lastRaw!.blend;
+                const shrunk = eyeOpen[side] > 0 ? 1 - raw[`geoEye${side}`] / eyeOpen[side] : 0;
+                return `${side.toLowerCase()} lids shrunk ${shrunk.toFixed(2)} score ${(raw[`eyeBlink${side}`] ?? 0).toFixed(2)}`;
+              })
+              .join('   ')}   (your own side; lids start at ${blink.lids[0]}, shut at ${blink.lids[1]})`,
+          ]
+        : []),
       ...(!demo && avatar.shapeNames.length && sides.strength > 0
         ? [
             `sides    ${[

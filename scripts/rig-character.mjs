@@ -1022,8 +1022,10 @@ function teethHold(i) {
 }
 
 const morphs = [];
-function buildMorph(name, ops, flip, clothes = false, guardTeeth = false) {
+function buildMorph(name, ops, flip, clothes = false, guardTeeth = false, split = 0) {
   const data = new Float32Array(nVerts * 3);
+  // How far each point is flattened by this shape's squashes (0 = not at all, 1 = fully closed).
+  const collapse = new Float32Array(nVerts);
   let touched = 0;
   for (let i = 0; i < nVerts; i++) {
     if (!isBodyVertex(i) || (!clothes && softOf[groupOf[i]] >= 0)) continue;
@@ -1052,6 +1054,7 @@ function buildMorph(name, ops, flip, clothes = false, guardTeeth = false) {
           const axis = { x: 0, y: 1, z: 2 }[op.axis ?? 'y'];
           // Above 1 the middle closes completely and the closed zone widens.
           data[3 * i + axis] -= Math.min(1, op.squash * w) * (p[axis] - c[axis]);
+          if (op.squash > 0) collapse[i] = Math.max(collapse[i], Math.min(1, op.squash * w));
         }
         moved = true;
       }
@@ -1060,15 +1063,46 @@ function buildMorph(name, ops, flip, clothes = false, guardTeeth = false) {
       const free = 1 - teethHold(i);
       for (let a = 0; a < 3; a++) data[3 * i + a] *= free;
     }
+    if (moved && split > 0) {
+      // Left and Right versions of a shape overlap on the middle of the face and would add up to
+      // double there. With "split" each side fades out across the middle line (half at the centre).
+      const share = smoothstep(-split, split, p[0] * flip);
+      for (let a = 0; a < 3; a++) data[3 * i + a] *= share;
+    }
     if (moved) touched++;
   }
-  morphs.push({ name, data, touched });
+  morphs.push({ name, data, touched, collapse });
 }
-for (const m of cfg.morphs ?? []) {
+// A "combo" shape corrects two shapes that are on together. Shapes simply add up, so skin that one
+// shape lifts toward an eye is pushed straight through the lid line when a blink has flattened that
+// same skin onto it, and the surface folds into itself. { "combo": ["eyeBlink", "noseSneer"] } builds
+// combo_eyeBlinkLeft_noseSneerLeft (and Right): it takes the second shape's movement back out
+// wherever the first shape has flattened the skin (fully where the eye is fully closed). The app
+// turns it on by the product of the two shapes (src/rigAvatar.ts), so each shape alone is unchanged.
+function buildCombo(first, second, amount = 1) {
+  const a = morphs.find((m) => m.name === first), b = morphs.find((m) => m.name === second);
+  if (!a || !b) return console.warn(`combo: no shape called ${a ? second : first}`);
+  const data = new Float32Array(nVerts * 3);
+  let touched = 0;
+  for (let i = 0; i < nVerts; i++) {
+    if (!a.collapse[i]) continue;
+    let moved = false;
+    for (let k = 0; k < 3; k++) {
+      data[3 * i + k] = -amount * a.collapse[i] * b.data[3 * i + k];
+      moved ||= data[3 * i + k] !== 0;
+    }
+    if (moved) touched++;
+  }
+  morphs.push({ name: `combo_${first}_${second}`, data, touched, collapse: new Float32Array(nVerts) });
+}
+for (const m of (cfg.morphs ?? []).filter((m) => !m.combo)) {
   if (m.sides) {
-    buildMorph(`${m.name}Left`, m.ops, 1, m.clothes, m.guardTeeth);
-    buildMorph(`${m.name}Right`, m.ops, -1, m.clothes, m.guardTeeth);
+    buildMorph(`${m.name}Left`, m.ops, 1, m.clothes, m.guardTeeth, m.split);
+    buildMorph(`${m.name}Right`, m.ops, -1, m.clothes, m.guardTeeth, m.split);
   } else buildMorph(m.name, m.ops, 1, m.clothes, m.guardTeeth);
+}
+for (const m of (cfg.morphs ?? []).filter((m) => m.combo)) {
+  for (const side of ['Left', 'Right']) buildCombo(`${m.combo[0]}${side}`, `${m.combo[1]}${side}`, m.amount);
 }
 
 // ---- write the geometry back, one primitive at a time ------------------------------

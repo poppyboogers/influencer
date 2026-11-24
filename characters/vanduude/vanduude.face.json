@@ -29,6 +29,48 @@
     "mouthFunnel": 1,
     "eyeBlink": 1
   },
+  "blinkComment": "Blinking is also measured from the gap between your eyelids, because the tracker's own blink score often stops short of a full blink. The app learns each eye's usual open gap by itself as it runs. 'lids' = how far the lid gap must shrink, as a fraction of the open gap: [the eye starts to close, the eye is fully shut] (lower both if blinks are still missed; raise the first if smiling or squinting shuts the eyes; [1, 1] = off). 'shutAt' = once an eye is this far closed (0 to 1) it snaps fully shut, and 'hold' = the blink then lasts at least this many seconds from that moment, so a very quick blink is still seen (it is never added on after your eye reopens; 0 = no minimum). 'together' = when both eyes are closed more than this, they close together by the larger amount (a wink stays one-sided; 1 = each eye on its own). Press H to see the live 'blink' line with the numbers.",
+  "blink": {
+    "lids": [0.3, 0.55],
+    "shutAt": 0.75,
+    "hold": 0.05,
+    "together": 0.35
+  },
+  "wrinklesComment": "Expression wrinkles: fine creases drawn in the skin's shading that deepen as a shape comes on (the face mesh is too coarse to fold). 'depth' = how deep the grooves look (0 = all wrinkles off), 'dark' = how much the bottom of a groove is darkened (0 to 1), 'width' = half-width of a groove. 'eyeGlowShuts' = as an eye shuts its glow goes out and the painted eye darkens to a lash line (false = the glow stays on through a closed eye). Each set: 'drive' = which shapes bring it on and how strongly (names without Left / Right; each side of the face follows its own side's shapes), 'strength' = this set against the others, 'width' = its grooves against the main width, 'lines' = the creases, each a run of x, y points on the front view of the character's own left side (x = sideways from the middle of the face, y = height; the same units as the rig file), mirrored to the right side. A crease fades in at its first point and out toward its last.",
+  "wrinkles": {
+    "depth": 0.002,
+    "dark": 0.45,
+    "width": 0.0013,
+    "eyeGlowShuts": true,
+    "sets": [
+      { "name": "outer eye corner (crow's feet)", "drive": { "eyeBlink": 1, "eyeSquint": 0.6, "cheekSquint": 0.4 },
+        "lines": [
+          [0.066, 2.107, 0.074, 2.112, 0.083, 2.116, 0.092, 2.118],
+          [0.068, 2.103, 0.077, 2.105, 0.086, 2.106, 0.094, 2.106],
+          [0.068, 2.099, 0.077, 2.098, 0.086, 2.096, 0.093, 2.093],
+          [0.066, 2.094, 0.074, 2.090, 0.082, 2.086, 0.089, 2.081]
+        ] },
+      { "name": "under the eye", "drive": { "eyeBlink": 0.7, "eyeSquint": 0.8, "cheekSquint": 0.6 }, "strength": 0.7,
+        "lines": [
+          [0.040, 2.086, 0.048, 2.083, 0.057, 2.083, 0.066, 2.086],
+          [0.042, 2.081, 0.050, 2.078, 0.059, 2.078, 0.067, 2.081]
+        ] },
+      { "name": "nose scrunch", "drive": { "noseSneer": 1 },
+        "lines": [
+          [0.000, 2.104, 0.006, 2.1045, 0.012, 2.106, 0.019, 2.109],
+          [0.000, 2.098, 0.006, 2.0985, 0.013, 2.100, 0.021, 2.103],
+          [0.000, 2.092, 0.006, 2.0925, 0.013, 2.094, 0.020, 2.097],
+          [0.016, 2.093, 0.021, 2.089, 0.026, 2.084, 0.030, 2.078],
+          [0.021, 2.096, 0.026, 2.092, 0.031, 2.087, 0.035, 2.081]
+        ] },
+      { "name": "frown (between the brows)", "drive": { "browDown": 1 },
+        "lines": [
+          [0.006, 2.108, 0.0065, 2.115, 0.008, 2.122, 0.011, 2.130],
+          [0.013, 2.111, 0.014, 2.117, 0.016, 2.123, 0.019, 2.129],
+          [0.024, 2.121, 0.032, 2.124, 0.041, 2.126, 0.050, 2.126]
+        ] }
+    ]
+  },
   "jawComment": "The lower jaw also opens with the measured gap between your lips, so the teeth part when you talk. 'fromLips' = how far the jaw drops for a given lip gap (about 2 matches your real opening, higher exaggerates, 0 = off). 'lipDeadZone' = how far the lips must part before the jaw starts to move (raise it if the jaw bobs while your mouth is shut).",
   "jaw": {
     "fromLips": 2.2,

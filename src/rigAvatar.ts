@@ -7,6 +7,7 @@ import { createBoneOverlay } from './boneOverlay';
 import { characterUrl, type CharacterInfo } from './characters';
 import { createSoftBodies } from './softBody';
 import type { TorsoPose } from './torso';
+import { createWrinkles, type WrinkleConfig } from './wrinkles';
 import { createWebcamHead, type WebcamHead, type WebcamHeadConfig } from './webcamHead';
 
 /** Unit directions in avatar space: x = screen right, y = up, z = toward the viewer. */
@@ -85,6 +86,8 @@ export async function createRigAvatar(
   canvas: HTMLCanvasElement,
   character: CharacterInfo,
   onProgress?: (fraction: number) => void,
+  /** Expression wrinkles drawn in the skin's shader ("wrinkles" in the character's face.json). */
+  wrinkleConfig?: WrinkleConfig,
 ): Promise<RigAvatar> {
   const url = characterUrl(character, character.model);
 
@@ -112,8 +115,13 @@ export async function createRigAvatar(
   });
   // Shapes named body... are corrections driven by the body pose (bodyShrugLeft), not face expressions.
   const shapeNames = [...new Set(shapeMeshes.flatMap((m) => Object.keys(m.morphTargetDictionary!)))].filter(
-    (name) => !name.startsWith('body'),
+    (name) => !name.startsWith('body') && !name.startsWith('combo_'),
   );
+  // combo_<first>_<second> shapes are corrections for two shapes on together (see rig-character.mjs):
+  // each is turned on by the product of its two shapes.
+  const combos = [...new Set(shapeMeshes.flatMap((m) => Object.keys(m.morphTargetDictionary!)))]
+    .filter((name) => name.startsWith('combo_'))
+    .map((name) => ({ name, first: name.split('_')[1], second: name.split('_')[2] }));
   const bodyShapes: Record<string, number> = {};
   const bone = (name: string) => bones.get(name) ?? null;
 
@@ -122,6 +130,8 @@ export async function createRigAvatar(
     roughness: character.roughness && characterUrl(character, character.roughness),
     emissive: character.emissive && characterUrl(character, character.emissive),
   });
+  // After the soft-body patch, which it keeps.
+  const wrinkles = createWrinkles(wrinkleConfig, shapeMeshes);
   const overlay = createBoneOverlay(bones.values());
   scene.add(overlay.object);
 
@@ -139,6 +149,14 @@ export async function createRigAvatar(
   if (view?.target) focus.set(...view.target);
   controls.target.copy(focus);
   camera.position.set(focus.x, focus.y + 0.05, focus.z + (view?.distance ?? 2.6));
+  // ?look=x,y,z,distance,turn frames a close-up for checking: the point looked at, how far from it, degrees round to the side.
+  const lookAt = new URLSearchParams(location.search).get('look')?.split(',').map(Number);
+  if (lookAt?.length && lookAt.every(Number.isFinite)) {
+    const [x, y, z, distance = 0.4, turn = 0] = lookAt;
+    const angle = THREE.MathUtils.degToRad(turn);
+    controls.target.set(x, y, z);
+    camera.position.set(x + Math.sin(angle) * distance, y, z + Math.cos(angle) * distance);
+  }
   controls.update();
 
   function resize() {
@@ -427,10 +445,12 @@ export async function createRigAvatar(
         jaw.rotation.set(pose.jaw * JAW_OPEN - ((jaw.userData.restOpen as number) ?? 0), pose.jawSide * JAW_SIDE, 0);
         jaw.position.set(jawRest.x, jawRest.y, jawRest.z + pose.jawForward * JAW_FORWARD);
       }
+      for (const c of combos) bodyShapes[c.name] = (pose.shapes[c.first] ?? 0) * (pose.shapes[c.second] ?? 0);
       for (const mesh of shapeMeshes) {
         const dict = mesh.morphTargetDictionary!;
         for (const name in dict) mesh.morphTargetInfluences![dict[name]] = bodyShapes[name] ?? pose.shapes[name] ?? 0;
       }
+      wrinkles?.update(pose.shapes);
 
       offsetBone('leftBrow', 0, pose.browLeft * 0.012);
       offsetBone('rightBrow', 0, pose.browRight * 0.012);

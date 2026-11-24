@@ -103,6 +103,11 @@ export async function createTracker(): Promise<Tracker> {
         blend.geoNoseRight = dist(129, 133) / eyes;
         blend.geoBrowLeft = (dist(285, 362) + dist(334, 263)) / eyes;
         blend.geoBrowRight = (dist(55, 133) + dist(105, 33)) / eyes;
+        // How open each eye is: the gap between the lids (three places along the eye) divided by
+        // that eye's own width, so it shrinks toward nothing in a blink. The tracker's eyeBlink
+        // score on its own often stops well short of "closed".
+        blend.geoEyeLeft = (dist(386, 374) + dist(385, 380) + dist(387, 373)) / (3 * (dist(362, 263) || 1));
+        blend.geoEyeRight = (dist(159, 145) + dist(158, 153) + dist(160, 144)) / (3 * (dist(133, 33) || 1));
         // Gap between the inner edges of the lips. Unlike jawOpen it does not rely on the chin
         // outline, which the tracker places poorly under a beard.
         blend.geoMouth = dist(13, 14) / eyes;
