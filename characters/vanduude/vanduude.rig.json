@@ -5,6 +5,8 @@
   "rebuildComment": "Used by 'npm run rebuild -- vanduude' after the model is edited in Blender: 'export' is the GLB exported from Blender, 'blend' the Blender file the vertex groups are read from.",
   "export": "vanduude-lowpoly-ver1.glb",
   "blend": "vanduude-lowpoly-reedit.blend",
+  "texturesComment": "Folder of texture pictures. On 'npm run rebuild', a picture there with the same name as one of the model's textures (texture_0.png = the colour texture) replaces it when the picture is newer than the exported model, so a texture can be edited without exporting from Blender again.",
+  "textures": "textures",
   "refineComment": "The exported face has too few points around the eyes, brows and nose for expressions to show (4 points per eye). 'npm run rebuild' splits every triangle inside this box into four, 'levels' times over; the surface keeps its exact shape. The box stops above the upper lip so the mouth is untouched. Remove this if the face is subdivided in Blender instead.",
   "refine": { "object": "lowpoly", "levels": 2, "x": [-0.11, 0.11], "y": [2.055, 2.17], "z": [0.02, 1] },
   "comment": "Coordinates are in model units: x = character's left, y = up (feet at 0), z = forward. Bones marked mirror are copied to the right side with x negated. Measured on vanduude-lowpoly-ver1 (aloha shirt, A-pose arms, mouth modelled open, separate teeth and hair objects). The source is made by: npm run rebuild -- vanduude",

@@ -4,6 +4,7 @@
 //   - shrinks the textures (default: 2048 px on the long side, JPEG).
 //   node scripts/prepare-glb.mjs <in.glb> <out.glb> [--drop <regex>] [--texture <px>]
 import { NodeIO } from '@gltf-transform/core';
+import fs from 'node:fs';
 import sharp from 'sharp';
 
 const args = process.argv.slice(2);
@@ -13,6 +14,9 @@ const flag = (name, fallback) => {
 };
 const drop = new RegExp(flag('--drop', 'highpoly'), 'i');
 const maxTexture = Number(flag('--texture', 2048));
+// --textures <folder>: a picture there named like one of the model's textures (texture_0.png) is used
+// in its place when it is newer than the model file, so a texture can be edited without re-exporting.
+const textureDir = flag('--textures', null);
 // --refine {"object":"lowpoly","levels":2,"x":[-0.1,0.1],"y":[2.05,2.17],"z":[0.02,1]}
 // adds points inside a box (used for the face, so expression shapes have something to move).
 const refine = JSON.parse(flag('--refine', 'null'));
@@ -183,7 +187,12 @@ if (refine) {
 
 // ---- textures -------------------------------------------------------------------------
 for (const texture of root.listTextures()) {
-  const before = texture.getImage();
+  let before = texture.getImage();
+  const edited = textureDir && ['png', 'jpg', 'jpeg'].map((ext) => `${textureDir}/${texture.getName()}.${ext}`).find((f) => fs.existsSync(f));
+  if (edited && fs.statSync(edited).mtimeMs > fs.statSync(input).mtimeMs) {
+    before = fs.readFileSync(edited);
+    console.log(`texture ${texture.getName()}: using the edited file ${edited}`);
+  }
   const image = sharp(Buffer.from(before));
   const meta = await image.metadata();
   const out = await image

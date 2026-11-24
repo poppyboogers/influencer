@@ -14,7 +14,7 @@ const run = (file, args) => execFileSync(file, args, { stdio: 'inherit' });
 
 if (cfg.export) {
   console.log(`\n== 1. Preparing ${cfg.export}`);
-  run(process.execPath, ['scripts/prepare-glb.mjs', `${dir}/${cfg.export}`, `${dir}/${cfg.source}`, ...(cfg.refine ? ['--refine', JSON.stringify(cfg.refine)] : [])]);
+  run(process.execPath, ['scripts/prepare-glb.mjs', `${dir}/${cfg.export}`, `${dir}/${cfg.source}`, ...(cfg.refine ? ['--refine', JSON.stringify(cfg.refine)] : []), ...(cfg.textures ? ['--textures', `${dir}/${cfg.textures}`] : [])]);
   // "height" in the rig file: stand the prepared model on y = 0 at that height (the app expects 2.25).
   if (cfg.height) run(process.execPath, ['scripts/normalize-glb.mjs', `${dir}/${cfg.source}`, `${dir}/${cfg.source}`, String(cfg.height)]);
 }
