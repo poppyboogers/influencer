@@ -160,7 +160,9 @@ interface FaceTuning {
   gain?: Record<string, number>;
   limit?: Record<string, number>;
   /** Strength of the landmark-measured nose scrunch and brow frown (0 = off). */
-  landmarks?: { noseScrunch?: number; browFrown?: number };
+  landmarks?: { noseScrunch?: number; browFrown?: number; lipRaise?: number };
+  /** One-sided mouth expressions (see SIDES). */
+  sides?: { strength?: number; deadZone?: number; full?: number };
   /** Jaw opening taken from the measured lip gap (see JAW_FROM_LIPS). */
   jaw?: { fromLips?: number; lipDeadZone?: number };
   /** The "f / v" trigger (see FV). */
@@ -189,8 +191,34 @@ const gainOf = (name: string) =>
  * measured from the face landmarks (see tracker.ts). Value = how much that measurement has shrunk
  * from the relaxed face, as a fraction; these turn it into shape strength.
  */
-const landmarkGain = () => ({ noseScrunch: tuning.landmarks?.noseScrunch ?? 10, browFrown: tuning.landmarks?.browFrown ?? 8 });
+const landmarkGain = () => ({
+  noseScrunch: tuning.landmarks?.noseScrunch ?? 10,
+  browFrown: tuning.landmarks?.browFrown ?? 8,
+  lipRaise: tuning.landmarks?.lipRaise ?? 6,
+});
 const LANDMARK_DEAD_ZONE = 0.02;
+/**
+ * One-sided mouth expressions. The tracker's Left / Right mouth scores rise and fall together
+ * even when only one side of the face moves, so a one-sided snarl or smile came out on both sides
+ * of the avatar. Each side of the mouth is therefore also measured from the face landmarks (see
+ * tracker.ts), and when one side has moved more than the other, the quieter side's shape is
+ * turned down. An even expression is left exactly as it was.
+ *   strength: how far the quieter side is turned down, 0..1 (0 = off, sides as the tracker reports)
+ *   deadZone: difference between the sides (fraction of the relaxed measurement) that still counts as even
+ *   full:     difference at which the quieter side is fully turned down
+ * Overridden by "sides" in the character's face.json.
+ */
+const SIDES = { strength: 1, deadZone: 0.015, full: 0.06 };
+/** Shape name (start) -> the landmark measurement that tells its sides apart, and which way it moves when the shape is made. */
+const SIDE_MEASURE: [string, string, 1 | -1][] = [
+  ['mouthUpperUp', 'geoLipUp', -1],
+  ['mouthSmile', 'geoCorner', -1],
+  ['cheekSquint', 'geoCorner', -1],
+  ['mouthFrown', 'geoCorner', 1],
+  ['mouthStretch', 'geoCornerOut', 1],
+  ['mouthDimple', 'geoCornerOut', 1],
+  ['mouthLowerDown', 'geoLipDown', 1],
+];
 const limitOf = (name: string) => clamp(tuned(tuning.limit, name) ?? 1, 0, 1);
 /** mouthSmileLeft <-> mouthSmileRight, mouthLeft <-> mouthRight, ... */
 const swapSides = (name: string) => name.replace(/Left|Right/, (side) => (side === 'Left' ? 'Right' : 'Left'));
@@ -415,6 +443,9 @@ async function main() {
   );
   /** Relaxed-face landmark measurements when the saved calibration has none: the first ones seen. */
   const firstSeen: Record<string, number> = {};
+  /** One-sided mouth expressions: settings, and the last measured lean per measurement (+ = the operator's left). */
+  const sides = { ...SIDES, ...tuning.sides };
+  const sideLean: Record<string, number> = {};
   const jawFilters = { side: new OneEuro(2.0, 0.8), forward: new OneEuro(2.0, 0.8) };
   const jawSteady = new Steady(JAW_STEADY);
   const lipGapSteady = new Steady(JAW_FROM_LIPS.steady);
@@ -597,7 +628,30 @@ async function main() {
     // The operator's own left/right. Brows: raised is positive, frowning negative.
     const brow = (side: 'Left' | 'Right') =>
       clamp(Math.max(b.browInnerUp ?? 0, b[`browOuterUp${side}`] ?? 0) - (b[`browDown${side}`] ?? 0), -1, 1);
-    const smile = (side: 'Left' | 'Right') => clamp((b[`mouthSmile${side}`] ?? 0) * 1.3, 0, 1);
+    /** How far a landmark measurement has moved from the relaxed face (signed fraction). */
+    const moved = (key: string) => {
+      const now = b[key];
+      if (now === undefined) return 0;
+      const base = calibration.blend?.[key] ?? (firstSeen[key] ??= now);
+      return base > 0 ? (now - base) / base : 0;
+    };
+    /**
+     * 1 = leave this shape alone, toward 0 = the other side of the mouth is doing more of it.
+     * `side` is the operator's own side.
+     */
+    const sideFactor = (name: string, side: 'Left' | 'Right') => {
+      const measure = SIDE_MEASURE.find(([prefix]) => name.startsWith(prefix));
+      if (!measure || sides.strength <= 0) return 1;
+      const [, key, direction] = measure;
+      // Positive = the operator's left side is making more of this shape than the right.
+      const lean = direction * (moved(`${key}Left`) - moved(`${key}Right`));
+      // For the read-out: in the sense of the first shape listed for this measurement.
+      sideLean[key] = lean * direction * SIDE_MEASURE.find(([, k]) => k === key)![2];
+      const against = side === 'Left' ? -lean : lean;
+      const t = clamp((against - sides.deadZone) / Math.max(1e-4, sides.full - sides.deadZone), 0, 1);
+      return 1 - clamp(sides.strength, 0, 1) * t * t * (3 - 2 * t);
+    };
+    const smile = (side: 'Left' | 'Right') => clamp((b[`mouthSmile${side}`] ?? 0) * 1.3, 0, 1) * sideFactor('mouthSmile', side);
     // Mirrored, your left side drives the avatar's right side (the one on your left on screen).
     const [avatarLeft, avatarRight] = mirror ? (['Right', 'Left'] as const) : (['Left', 'Right'] as const);
 
@@ -635,7 +689,11 @@ async function main() {
       if (gainOf(name) > 0) {
         if (name.startsWith('noseSneer')) value += shrink(`geoNose${side}`) * LANDMARK_GAIN.noseScrunch;
         if (name.startsWith('browDown')) value += shrink(`geoBrow${side}`) * LANDMARK_GAIN.browFrown;
+        // A one-sided snarl barely moves the tracker's own score, so the lift of each side of
+        // the upper lip is measured too.
+        if (name.startsWith('mouthUpperUp')) value += shrink(`geoLipUp${side}`) * LANDMARK_GAIN.lipRaise;
       }
+      if (/(Left|Right)$/.test(source)) value *= sideFactor(name, side);
       return clamp(value, 0, limitOf(name));
     };
     for (const [name, filter] of shapeFilters) {
@@ -833,6 +891,21 @@ async function main() {
               .map(([name, v]) => `${name} ${v.toFixed(1)}`)
               .join('  ') || 'relaxed'
       }`,
+      ...(!demo && avatar.shapeNames.length && sides.strength > 0
+        ? [
+            `sides    ${[
+              ['lip raise', 'geoLipUp'],
+              ['corner up', 'geoCorner'],
+              ['corner out', 'geoCornerOut'],
+              ['lower lip', 'geoLipDown'],
+            ]
+              .map(([label, key]) => {
+                const lean = sideLean[key] ?? 0;
+                return `${label} ${Math.abs(lean) < sides.deadZone ? 'even ' : lean > 0 ? 'LEFT ' : 'RIGHT'} ${Math.abs(lean).toFixed(3)}`;
+              })
+              .join('   ')}   (your own side; acts from ${sides.deadZone}, full at ${sides.full})`,
+          ]
+        : []),
       ...(fvWanted && !demo
         ? [
             `f / v    ${

@@ -42,9 +42,16 @@
     "voiced": 0.7,
     "release": 0.25
   },
-  "landmarksComment": "Nose scrunch and brow frown are also measured directly from the face landmarks, because the tracker's own scores for them barely move. Higher = reacts to a smaller scrunch / frown, 0 = off. Press C with a relaxed face so the app knows your relaxed measurements.",
+  "landmarksComment": "Nose scrunch, brow frown and upper-lip raise (each side of the lip on its own, for a snarl) are also measured directly from the face landmarks, because the tracker's own scores for them barely move. Higher = reacts to a smaller scrunch / frown / lip lift, 0 = off. Press C with a relaxed face so the app knows your relaxed measurements.",
   "landmarks": {
     "noseScrunch": 10,
-    "browFrown": 8
+    "browFrown": 8,
+    "lipRaise": 6
+  },
+  "sidesComment": "One-sided mouth expressions (snarl, half smile, half frown, one corner pulled out, one side of the lower lip down). The tracker reports the two sides of the mouth together, so each side is also measured from the face landmarks; when one side of your mouth has moved more than the other, the quieter side of the model is turned down. 'strength' = how far it is turned down, 0 to 1 (0 = off: both sides move together as before). 'deadZone' = how different the two sides must be before anything happens (raise it if an even smile comes out lopsided, or the mouth goes lopsided when you turn your head). 'full' = the difference at which the quieter side is fully still (lower it if a one-sided snarl still shows on both sides). Press C with a relaxed face first. Press H to see the live 'sides' line with the numbers.",
+  "sides": {
+    "strength": 1,
+    "deadZone": 0.015,
+    "full": 0.06
   }
 }

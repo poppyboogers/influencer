@@ -112,6 +112,20 @@ export async function createTracker(): Promise<Tracker> {
         blend.geoLipUpper = dist(0, 13) / eyes;
         blend.geoLipChin = dist(17, 152) / eyes;
         blend.geoLipWidth = dist(61, 291) / eyes;
+        // Each side of the mouth on its own (Left = the operator's left), because the tracker's
+        // Left / Right mouth scores rise and fall together even in a one-sided expression:
+        //   geoLipUp      upper lip to the inner eye corner (shrinks as that side of the lip lifts: a snarl)
+        //   geoCorner     mouth corner to the outer eye corner (shrinks in a smile, grows in a frown)
+        //   geoCornerOut  mouth corner to the base of the nose (grows as the corner is pulled sideways)
+        //   geoLipDown    lower lip to the base of the nose (grows as that side of the lip drops)
+        blend.geoLipUpLeft = dist(267, 362) / eyes;
+        blend.geoLipUpRight = dist(37, 133) / eyes;
+        blend.geoCornerLeft = dist(291, 263) / eyes;
+        blend.geoCornerRight = dist(61, 33) / eyes;
+        blend.geoCornerOutLeft = dist(291, 2) / eyes;
+        blend.geoCornerOutRight = dist(61, 2) / eyes;
+        blend.geoLipDownLeft = dist(314, 2) / eyes;
+        blend.geoLipDownRight = dist(84, 2) / eyes;
       }
 
       return { yaw: euler.y, pitch: euler.x, roll: euler.z, blend, head };
