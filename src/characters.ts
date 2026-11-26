@@ -13,6 +13,8 @@ export interface CharacterInfo {
   face?: string;
   roughness?: string;
   emissive?: string;
+  /** The seat behind the character in stream mode: a picture on a green background. */
+  seat?: string;
   thumb?: string;
   /** Changes when the character's files change. */
   v: string;

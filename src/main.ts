@@ -6,8 +6,10 @@ import { characterUrl, loadCharacters, showPicker, type CharacterInfo } from './
 import { FV_SOUND, createFvListener, type FvListener, type FvSound } from './fricative';
 import { createHandTracker, type HandSample, type HandTracker } from './hands';
 import type { WrinkleConfig } from './wrinkles';
+import type { StreamSetup } from './lighting';
 import { createRigAvatar, type ArmPose, type HandPose, type RigPose } from './rigAvatar';
 import { OneEuro, Steady, clamp, ease } from './smoothing';
+import { streamConfig, type StreamConfig } from './stream';
 import { TorsoFilter, type TorsoPose } from './torso';
 import { createTracker, type FaceSample, type Tracker } from './tracker';
 
@@ -42,12 +44,16 @@ const CALIBRATION_KEY = 'mocap.calibration';
 const LOST_AFTER_MS = 250;
 const ARM_LOST_AFTER_MS = 400;
 /** An arm has to be seen for this long without a break before the avatar follows it. */
-const ARM_ACQUIRE_MS = 250;
+const ARM_ACQUIRE_MS = 100;
 /** A hand counts as being at the body tracker's wrist within this distance (fraction of the picture). */
 const HAND_AT_WRIST = 0.15;
 /** An arm stays confirmed this long after its hand was last found (fists and fast moves drop out briefly). */
 const HAND_CONFIRMS_ARM_MS = 800;
 const HAND_LOST_AFTER_MS = 350;
+/** A hand's measured size is used for this long after it was last seen. */
+const HAND_SIZE_LASTS_MS = 500;
+/** Assumed horizontal field of view of the webcam, for turning sizes in the picture into distances. */
+const WEBCAM_FOV = (60 * Math.PI) / 180;
 /** Maximum head rotation in degrees. */
 const LIMITS = { yaw: 55, pitch: 35, roll: 30 };
 
@@ -181,6 +187,10 @@ interface FaceTuning {
     tilt?: [number, number];
     voice?: [number, number];
   };
+  /** Arms: maxRaise = how far above shoulder height the upper arm may point, degrees (0 = never above the shoulder). Unset = no limit. */
+  arms?: { maxRaise?: number };
+  /** Stream mode, ?stream in the address (see stream.ts). */
+  stream?: Partial<StreamConfig>;
 }
 let tuning: FaceTuning = {};
 const tuned = (table: Record<string, number> | undefined, name: string) => {
@@ -256,9 +266,76 @@ function loadCalibration(): Calibration {
   return { yaw: 0, pitch: 0, roll: 0, jaw: 0 };
 }
 
-/** Smooths the six numbers of one arm's two direction vectors. */
+/** A person's arm, shoulder to wrist, is about this many shoulder widths long. */
+const ARM_PER_SHOULDER = 1.45;
+
+/**
+ * Upper arm and forearm directions that put the avatar's hand where the operator's is. A hand
+ * position leaves the elbow free to swing round the line from shoulder to hand; it is put at the
+ * point of that circle nearest to where the elbow sits in the resting pose.
+ *   reach  where the hand should be from the middle of the avatar's shoulders, avatar axes, in its shoulder widths
+ *   side   1 for the avatar's left arm (+x), -1 for its right
+ *   armPerShoulder  the avatar's arm length in its own shoulder widths
+ *   restUpper  the resting pose's upper arm direction for this side (where the elbow is at rest)
+ *   gain   above 1 makes the avatar reach further than the operator does
+ *   inward below 1 squeezes the hand's sideways position toward the middle of the chest
+ *   limit  keeps the upper arm within what the model can do; the forearm then makes up the difference
+ * The hand is placed in shoulder widths from the middle of the chest, so on a broad avatar it
+ * lands in the same place against its body as the operator's hand does against theirs.
+ */
+function armForReach(
+  reach: Vec3,
+  side: 1 | -1,
+  armPerShoulder: number,
+  restUpper: Vec3,
+  gain = 1,
+  inward = 1,
+  limit: (upper: Vec3) => Vec3 = (v) => v,
+): ArmPose {
+  // From the avatar's own shoulder (half a shoulder width out from the middle), in shoulder widths.
+  const from: Vec3 = [reach[0] * gain * inward - 0.5 * side, reach[1] * gain, reach[2] * gain];
+  const length = Math.hypot(...from);
+  const dir: Vec3 = length > 1e-4 ? [from[0] / length, from[1] / length, from[2] / length] : [0, -1, 0];
+  // How far the hand is from the shoulder, as a fraction of the straight arm. Both arm bones count as half.
+  // Never closer than a third of the arm: with the hand almost on the shoulder the elbow has no steady place to be.
+  const f = clamp(length / armPerShoulder, 0.35, 0.99);
+  // The elbow sits off the shoulder-to-hand line, on the side the resting elbow is.
+  const pole = restUpper;
+  const along = pole[0] * dir[0] + pole[1] * dir[1] + pole[2] * dir[2];
+  let perp: Vec3 = [pole[0] - dir[0] * along, pole[1] - dir[1] * along, pole[2] - dir[2] * along];
+  const perpLength = Math.hypot(...perp);
+  perp = perpLength > 1e-3 ? [perp[0] / perpLength, perp[1] / perpLength, perp[2] / perpLength] : [side, 0, 0];
+  const out = Math.sqrt(Math.max(0, 0.25 - (f * f) / 4));
+  const elbow: Vec3 = [dir[0] * (f / 2) + perp[0] * out, dir[1] * (f / 2) + perp[1] * out, dir[2] * (f / 2) + perp[2] * out];
+  const upper = limit([elbow[0] * 2, elbow[1] * 2, elbow[2] * 2]);
+  // From wherever the elbow ended up, the forearm still points at the hand.
+  const lower: Vec3 = [dir[0] * f - upper[0] / 2, dir[1] * f - upper[1] / 2, dir[2] * f - upper[2] / 2];
+  const lowerLength = Math.hypot(...lower) || 1;
+  return { upper, lower: [lower[0] / lowerLength, lower[1] / lowerLength, lower[2] / lowerLength] };
+}
+
+/**
+ * Smooths the six numbers of one arm's two direction vectors. The first number is how hard it
+ * smooths a still arm (higher = less smoothing, more jitter); the second is how quickly the
+ * smoothing lets go once the arm moves (higher = less lag on a moving arm).
+ */
 class ArmFilter {
-  private f = Array.from({ length: 6 }, () => new OneEuro(1.5, 0.4));
+  private f = Array.from({ length: 6 }, () => new OneEuro(1.5, 0.8));
+  // Stream mode steadies the hand's position before the elbow is worked out from it: a small
+  // wobble in where the hand is becomes a large swing of the elbow, so it has to go first.
+  // Sideways and up / down come from the picture; depth is the tracker's guess and gets a wide
+  // still band and slow smoothing.
+  private hand = [new OneEuro(1.2, 1.0), new OneEuro(1.2, 1.0), new OneEuro(0.8, 0.6)];
+  private still = [new Steady(0.02), new Steady(0.02), new Steady(0.03)];
+
+  /** The hand's position (across and up in shoulder widths, then the share of the way to the lens) with the tracker's wobble taken out. */
+  place(reach: Vec3, dt: number, now: number): Vec3 {
+    if (now - this.lastSeen > ARM_LOST_AFTER_MS) {
+      this.hand = [new OneEuro(1.2, 1.0), new OneEuro(1.2, 1.0), new OneEuro(0.8, 0.6)];
+      this.still = [new Steady(0.02), new Steady(0.02), new Steady(0.03)];
+    }
+    return reach.map((v, i) => this.hand[i].filter(this.still[i].follow(v), dt)) as Vec3;
+  }
   value: ArmPose | null = null;
   lastSeen = -Infinity;
   /** Start of the current unbroken run of sightings. */
@@ -327,9 +404,24 @@ async function main() {
   const LANDMARK_GAIN = landmarkGain();
 
   overlayEl.textContent = `Loading ${character.name}...`;
+  // ?stream: the webcam-on-the-monitor view on a green screen, for OBS. The picture is a fixed
+  // square in the window's top left corner (1024 pixels; ?size= changes it), whatever the window's size.
+  // ?key=alpha leaves the background see-through instead of green (used by stream-preview.html).
+  let streamSetup: StreamSetup | undefined;
+  if (params.has('stream')) {
+    const config = streamConfig(tuning.stream);
+    const size = clamp(Number(params.get('size')) || 1024, 128, 4096);
+    const transparent = params.get('key') === 'alpha';
+    streamSetup = { config, transparent, seatUrl: character.seat && characterUrl(character, character.seat) };
+    document.body.classList.add('stream');
+    document.documentElement.style.background = document.body.style.background = transparent ? 'transparent' : config.green;
+    Object.assign(canvas.style, { inset: '0 auto auto 0', width: `${size}px`, height: `${size}px` });
+  }
   const avatar = await createRigAvatar(canvas, character, (fraction) => {
     overlayEl.textContent = `Loading ${character.name}... ${Math.round(fraction * 100)}%`;
-    }, tuning.wrinkles);
+    }, tuning.wrinkles,
+    streamSetup,
+  );
 
   // Character picker: the button top right, or P.
   let picker: { close(): void } | null = null;
@@ -428,7 +520,7 @@ async function main() {
   // --- state -------------------------------------------------------------
   let calibration = loadCalibration();
   let mirror = true;
-  let bodyOn = true;
+  let bodyOn = params.get('body') !== 'off'; // ?body=off starts with arm and torso tracking off (same as pressing B)
   let handsOn = true;
   let handMs = 0;
   let lastHandDetect = performance.now();
@@ -491,6 +583,8 @@ async function main() {
   const handFilters = { left: new HandFilter(), right: new HandFilter() };
   /** When the hand tracker last found a hand at the body tracker's wrist (the operator's own left / right). */
   const handAtWrist = { left: -Infinity, right: -Infinity };
+  /** How large each hand was last drawn (the operator's own left / right), for judging how far forward it is. */
+  const handSize: Record<'left' | 'right', { perMetre: number; at: number } | null> = { left: null, right: null };
   const torsoFilter = new TorsoFilter();
   /** The f / v trigger: the last microphone reading, the held sound level, the lip level and the two together. */
   let fvSound: FvSound | null = null;
@@ -500,23 +594,36 @@ async function main() {
   const fvLog: string[] = [];
   let fvLogged = 0;
 
+  /** Takes the face and posture seen right now as upright and relaxed. */
+  const calibrate = () => {
+    if (!lastRaw) return;
+    calibration = {
+      yaw: lastRaw.yaw,
+      pitch: lastRaw.pitch,
+      roll: lastRaw.roll,
+      jaw: lastRaw.blend.jawOpen ?? 0,
+      blend: { ...lastRaw.blend },
+    };
+    try {
+      localStorage.setItem(CALIBRATION_KEY, JSON.stringify(calibration));
+    } catch {
+      /* calibration just won't persist */
+    }
+    torsoFilter.recalibrate(); // the way you are sitting now becomes upright and relaxed
+  };
+  /** How long after C the calibration is taken a second time, once the hand is back from the keyboard. */
+  const CALIBRATE_AGAIN_MS = 2000;
+  let calibrateAgain = 0;
+
   window.addEventListener('keydown', (e) => {
     const key = e.key.toLowerCase();
     if (key === 'c') report(`C pressed (face ${lastRaw ? 'seen' : 'not seen yet'})`);
-    if (key === 'c' && lastRaw) {
-      calibration = {
-        yaw: lastRaw.yaw,
-        pitch: lastRaw.pitch,
-        roll: lastRaw.roll,
-        jaw: lastRaw.blend.jawOpen ?? 0,
-        blend: { ...lastRaw.blend },
-      };
-      try {
-        localStorage.setItem(CALIBRATION_KEY, JSON.stringify(calibration));
-      } catch {
-        /* calibration just won't persist */
-      }
-      torsoFilter.recalibrate(); // the way you are sitting now becomes upright and relaxed
+    if (key === 'c') {
+      // Now, and again in two seconds: reaching for the key shifts the shoulders, so the first
+      // reading alone would be of the wrong posture.
+      calibrate();
+      clearTimeout(calibrateAgain);
+      calibrateAgain = window.setTimeout(calibrate, CALIBRATE_AGAIN_MS);
     } else if (key === 'm') {
       mirror = !mirror;
       torsoFilter.recalibrate();
@@ -605,6 +712,17 @@ async function main() {
       const len = Math.hypot(...v);
       return [v[0] / len, v[1] / len, v[2] / len];
     };
+    // ?demo&arm=ux,uy,uz,lx,ly,lz holds the operator's left arm in one pose, for checking the rig and the
+    // framing: upper arm and forearm directions as the tracker gives them (x = picture right, y = down, z = away from the camera).
+    // ?demo&reach=x,y,z does the same by hand position: the left wrist from the middle of the shoulders, in metres.
+    const fixedReach = params.get('reach')?.split(',').map(Number);
+    if (fixedReach?.length === 3 && fixedReach.every(Number.isFinite)) {
+      return { left: { upper: [0, 1, 0], lower: [0, 1, 0], elbowSeen: false, reach: fixedReach.map((v) => v / 0.38) as Vec3 }, right: null };
+    }
+    const fixedArm = params.get('arm')?.split(',').map(Number);
+    if (fixedArm?.length === 6 && fixedArm.every(Number.isFinite)) {
+      return { left: { upper: norm(fixedArm.slice(0, 3) as Vec3), lower: norm(fixedArm.slice(3) as Vec3) }, right: null };
+    }
     return {
       // Operator's left arm: raised out to their left (image right), forearm up and waving.
       left: { upper: norm([0.9, -0.2, -0.1]), lower: norm([0.3 + wave, -1, -0.2]) },
@@ -619,16 +737,32 @@ async function main() {
       return [v[0] / len, v[1] / len, v[2] / len];
     };
     const forward = norm([0.3 + (fixedPose ? 0.5 : Math.sin(t * 2.2) * 0.5), -1, -0.2]);
-    const side = norm([forward[1], -forward[0], 0]);
+    // ?demo&turn=degrees turns the demo hand about its own length, for checking how the forearm's skin follows.
+    const turn = MathUtils.degToRad(Number(params.get('turn')) || 0);
+    const flat = norm([forward[1], -forward[0], 0]);
+    const out: Vec3 = [forward[1] * flat[2] - forward[2] * flat[1], forward[2] * flat[0] - forward[0] * flat[2], forward[0] * flat[1] - forward[1] * flat[0]];
+    const side = norm([0, 1, 2].map((k) => flat[k] * Math.cos(turn) + out[k] * Math.sin(turn)) as Vec3);
     const normal: Vec3 = [
       forward[1] * side[2] - forward[2] * side[1],
       forward[2] * side[0] - forward[0] * side[2],
       forward[0] * side[1] - forward[1] * side[0],
     ];
-    const curl = fixedPose ? 0.5 : 0.5 + 0.5 * Math.sin(t * 2.6);
+    // ?demo&curl=0..1 holds the fingers that far closed (1 = a person's fist); &point leaves the index finger straight.
+    const asked = params.get('curl');
+    const curl = asked !== null ? Number(asked) || 0 : fixedPose ? 0.5 : 0.5 + 0.5 * Math.sin(t * 2.6);
     const bent = (angle: number): Vec3 =>
       norm([0, 1, 2].map((k) => forward[k] * Math.cos(angle) + normal[k] * Math.sin(angle)) as Vec3);
-    return { forward, side, fingers: Array.from({ length: 5 }, () => ({ prox: bent(curl * 1.2), dist: bent(curl * 2.3) })) };
+    return {
+      forward,
+      side,
+      fingers: Array.from({ length: 5 }, (_, i) => {
+        if (i === 1 && params.has('point')) return { prox: bent(0.05), dist: bent(0.1) };
+        if (i > 0) return { prox: bent(curl * 1.35), dist: bent(curl * 3.3) };
+        // A thumb that starts out to the index side and folds across the palm as the hand closes.
+        const mixed = (f: number, sd: number, n: number): Vec3 => norm([0, 1, 2].map((k) => forward[k] * f + side[k] * sd + normal[k] * n) as Vec3);
+        return { prox: mixed(1 - 0.6 * curl, 0.7 - 0.9 * curl, 0.6 * curl), dist: mixed(0.6 - 0.3 * curl, 0.6 - 1.4 * curl, 0.3 * curl) };
+      }),
+    };
   }
 
   function consumeFace(sample: FaceSample, dt: number) {
@@ -765,16 +899,60 @@ async function main() {
     // MediaPipe: x = image right, y = down, z = away from camera.
     // Avatar:    x = screen right, y = up, z = toward the viewer.
     const map = (v: Vec3): Vec3 => [mirror ? -v[0] : v[0], -v[1], -v[2]];
-    const feed = (filter: ArmFilter, arm: ArmSample | null) => {
-      if (arm) filter.update(map(arm.upper), map(arm.lower), dt, now);
+    // A character whose shoulders deform badly with the arm overhead keeps its upper arm at or
+    // below a set angle ("arms": { "maxRaise" } in face.json). The forearm is left free.
+    const maxRaise = tuning.arms?.maxRaise;
+    const lowered = (v: Vec3): Vec3 => {
+      if (maxRaise === undefined) return v;
+      const flat = Math.max(Math.hypot(v[0], v[2]), 0.2);
+      const top = flat * Math.tan(MathUtils.degToRad(clamp(maxRaise, -80, 80)));
+      if (v[1] <= top) return v;
+      // Straight up has no sideways direction of its own: send it out to the arm's own side.
+      const x = Math.hypot(v[0], v[2]) < 0.2 ? Math.sign(v[0] || 1) * 0.2 : v[0];
+      const len = Math.hypot(x, top, v[2]);
+      return [x / len, top / len, v[2] / len];
+    };
+    /**
+     * How far a hand is held toward the webcam, as a share of the way from the shoulders to the lens
+     * (0 = level with the shoulders), from how large it is drawn against them: nearer is larger.
+     * null when the hand has not just been seen.
+     */
+    const forward = (own: 'left' | 'right'): number | null => {
+      const hand = handSize[own];
+      if (!hand || now - hand.at > HAND_SIZE_LASTS_MS || !sample.shoulders) return null;
+      // Distance from the camera, hand against shoulders (under 1 = the hand is nearer).
+      return 1 - clamp(sample.shoulders.perMetre / hand.perMetre, 0.3, 1.2);
+    };
+    /** The operator's shoulders' distance from the webcam, in shoulder widths, from how wide they are drawn. */
+    const webcamAway = () => (sample.shoulders ? 1 / (2 * Math.tan(WEBCAM_FOV / 2) * sample.shoulders.across) : 2.2);
+    const feed = (filter: ArmFilter, arm: ArmSample | null, side: 1 | -1, own: 'left' | 'right') => {
+      if (!arm) return;
+      if (streamSetup && arm.reach) {
+        // Stream mode: put the hand where the operator's hand is, and work the elbow out from that.
+        const { armReach, armInward, armDepth } = streamSetup.config;
+        // Depth, as a share of the way to the lens: from the hand's size when there is one, the body
+        // tracker's own guess otherwise. Never more than most of the way.
+        const share = clamp((forward(own) ?? -arm.reach[2] / webcamAway()) * armDepth, -0.1, 0.7);
+        // Steadied: across and up in shoulder widths (avatar axes), and that share.
+        const across = map([arm.reach[0], arm.reach[1], 0]);
+        const [x, y, toLens] = filter.place([across[0] * armInward, across[1], share], dt, now);
+        // A hand moving toward the webcam stays where it is in the picture and grows. So the avatar's
+        // hand moves along the line from where it would be beside the body to the avatar's own camera.
+        const lens = avatar.cameraFrom ?? [0, 0.5, webcamAway()];
+        const hand: Vec3 = [x + (lens[0] - x) * toLens, y + (lens[1] - y) * toLens, lens[2] * toLens];
+        // Of all the elbow positions that reach the hand, take the one nearest the resting arm's.
+        const rest = streamSetup.config.restArms.upper;
+        const placed = armForReach(hand, side, avatar.armPerShoulder ?? ARM_PER_SHOULDER, [rest[0] * side, rest[1], rest[2]], armReach, 1, lowered);
+        filter.update(placed.upper, placed.lower, dt, now);
+      } else if (arm.elbowSeen !== false) filter.update(lowered(map(arm.upper)), map(arm.lower), dt, now);
     };
     // The body tracker sometimes invents a wrist inside the picture for an arm that is out of
     // sight. When the hand tracker is running, an arm only counts while it has found a real hand
     // at that wrist.
     const real = (side: 'left' | 'right') =>
       demo || !handTracker || now - handAtWrist[side] < HAND_CONFIRMS_ARM_MS ? sample[side] : null;
-    feed(armFilters.left, mirror ? real('right') : real('left'));
-    feed(armFilters.right, mirror ? real('left') : real('right'));
+    feed(armFilters.left, mirror ? real('right') : real('left'), 1, mirror ? 'right' : 'left'); // the avatar's left is +x
+    feed(armFilters.right, mirror ? real('left') : real('right'), -1, mirror ? 'left' : 'right');
     if (sample.wrists) wrists = sample.wrists;
     if (sample.torso) torsoFilter.update(sample.torso, mirror, dt, now);
   }
@@ -799,6 +977,7 @@ async function main() {
       let side: 'left' | 'right';
       if (dl < HAND_AT_WRIST) handAtWrist.left = now;
       if (dr < HAND_AT_WRIST) handAtWrist.right = now;
+      if (hand.perMetre && Math.min(dl, dr) < HAND_AT_WRIST) handSize[dl <= dr ? 'left' : 'right'] = { perMetre: hand.perMetre, at: now };
       if (Math.min(dl, dr) < 0.25) side = dl <= dr ? 'left' : 'right';
       // MediaPipe's label assumes a mirrored picture; the webcam frame is not mirrored, so swap it.
       else side = hand.label === 'Left' ? 'right' : 'left';
@@ -937,6 +1116,7 @@ async function main() {
       }`,
       `hands    ${!avatar.hasFingers ? 'no finger bones in this model' : !handsOn ? 'off' : `left ${armState(pose.leftHand)}, right ${armState(pose.rightHand)}`}` +
         (!demo && avatar.hasFingers && !handTracker ? '  (hand tracker failed to load)' : ''),
+      ...(['left', 'right'] as const).flatMap((side) => (avatar.handState()[side] ? [`${side === 'left' ? 'l' : 'r'} hand   ${avatar.handState()[side]}`] : [])),
       ...(avatar.softParts ? [`soft     ${avatar.softParts} (simulated)`] : []),
       ...(liveHead ? [`head     ${liveHead.status()}`] : []),
       `face     ${

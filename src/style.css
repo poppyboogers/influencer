@@ -179,3 +179,19 @@ body.clean #overlay {
     height: 190px;
   }
 }
+
+/* Stream mode (?stream): nothing but the picture, for OBS to capture. H shows the read-out, the
+   webcam preview and the buttons for checking the tracking; H again hides them. */
+body.stream.clean #pick,
+body.stream.clean #helmet {
+  display: none;
+}
+/* The picture is a fixed square in the corner: keep the webcam preview inside it. */
+body.stream #cam {
+  position: absolute;
+  left: 12px;
+  right: auto;
+  top: 760px;
+  bottom: auto;
+  width: 320px;
+}

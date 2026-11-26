@@ -95,5 +95,12 @@
     "strength": 1,
     "deadZone": 0.015,
     "full": 0.06
+  },
+  "streamComment": "Stream mode (?stream in the address): the webcam-on-the-monitor view on a green screen for OBS. See src/stream.ts for every setting. camera: fov in degrees, distance in front of the head, height above it, lookBelow = how far under the head the camera points. seat: the picture vanduude.seat.png, scale against the frame height, offset [right, up].",
+  "armsComment": "maxRaise: how far above shoulder height the upper arm may point, in degrees. 0 = never above the shoulder (the mesh distorts with the arm overhead). Remove \"arms\" for no limit.",
+  "arms": { "maxRaise": 0 },
+  "stream": {
+    "camera": { "fov": 58, "distance": 0.8, "height": 0.32, "lookBelow": 0.12 },
+    "seat": { "scale": 1.0, "offset": [0, 0] }
   }
 }

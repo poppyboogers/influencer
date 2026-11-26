@@ -3,7 +3,9 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { SavePass } from 'three/addons/postprocessing/SavePass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { createStreamLens, monitorLight, type StreamConfig } from './stream';
 
 /**
  * The app's look: studio surroundings for reflections, a shadow-casting key light, fill and rim
@@ -43,8 +45,16 @@ export interface Look {
   resize(): void;
 }
 
-export function createLook(renderer: THREE.WebGLRenderer, scene: THREE.Scene, plain = false): Look {
-  if (plain) {
+/** Stream mode (see stream.ts): its settings and the character's seat picture, if it has one. */
+export interface StreamSetup {
+  config: StreamConfig;
+  seatUrl?: string;
+  /** Leave the background see-through instead of green. */
+  transparent?: boolean;
+}
+
+export function createLook(renderer: THREE.WebGLRenderer, scene: THREE.Scene, plain = false, stream?: StreamSetup): Look {
+  if (plain && !stream) {
     scene.add(new THREE.HemisphereLight(0xffffff, 0x30343c, 1.6));
     const key = new THREE.DirectionalLight(0xffffff, 2.4);
     key.position.set(2, 3, 4);
@@ -64,10 +74,12 @@ export function createLook(renderer: THREE.WebGLRenderer, scene: THREE.Scene, pl
   // Metal and glossy surfaces need something to reflect; without surroundings they render near black.
   const pmrem = new THREE.PMREMGenerator(renderer);
   scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-  scene.environmentIntensity = LOOK.environment;
+  // Stream mode dims the room so the monitor is the main light (stream.ts, "room").
+  const room = stream?.config.room ?? { environment: 1, ambient: 1, key: 1, fill: 1, rim: 1 };
+  scene.environmentIntensity = LOOK.environment * room.environment;
   pmrem.dispose();
 
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x30343c, LOOK.ambient));
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x30343c, LOOK.ambient * room.ambient));
 
   const centre = new THREE.Vector3(0, 1.3, 0); // the character stands at the origin, 2.25 tall
   const light = (spec: { color: number; intensity: number; from: number[] }) => {
@@ -77,9 +89,9 @@ export function createLook(renderer: THREE.WebGLRenderer, scene: THREE.Scene, pl
     scene.add(l, l.target);
     return l;
   };
-  const key = light(LOOK.key);
-  light(LOOK.fill);
-  light(LOOK.rim);
+  const key = light({ ...LOOK.key, intensity: LOOK.key.intensity * room.key });
+  light({ ...LOOK.fill, intensity: LOOK.fill.intensity * room.fill });
+  light({ ...LOOK.rim, intensity: LOOK.rim.intensity * room.rim });
 
   key.castShadow = true;
   key.shadow.mapSize.set(LOOK.shadowMap, LOOK.shadowMap);
@@ -97,15 +109,31 @@ export function createLook(renderer: THREE.WebGLRenderer, scene: THREE.Scene, pl
   // brightest parts are blurred and added back, then tone mapping is applied once at the end.
   let composer: EffectComposer | null = null;
   let renderPass: RenderPass | null = null;
-  if (LOOK.bloom.strength > 0) {
+  // Stream mode: the screen's light on the character, and the webcam lens as the last step.
+  const lens = stream ? createStreamLens(stream.config, stream.seatUrl, stream.transparent) : null;
+  const monitor = stream && stream.config.monitor.intensity > 0 ? new THREE.PointLight(0xffffff, 0, 6, 2) : null;
+  if (monitor) scene.add(monitor);
+  if (LOOK.bloom.strength > 0 || lens) {
     const size = renderer.getDrawingBufferSize(new THREE.Vector2());
     const target = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: 4 });
     composer = new EffectComposer(renderer, target);
     composer.setPixelRatio(1);
     renderPass = new RenderPass(scene, new THREE.PerspectiveCamera());
     composer.addPass(renderPass);
-    composer.addPass(new UnrealBloomPass(size.clone().multiplyScalar(0.5), LOOK.bloom.strength, LOOK.bloom.radius, LOOK.bloom.threshold));
+    if (lens) {
+      // Keep a copy from before the glow: its alpha is where the character is. (The glow pass does not keep alpha.)
+      const save = new SavePass();
+      composer.addPass(save);
+      lens.setMask(save.renderTarget.texture);
+    }
+    if (LOOK.bloom.strength > 0) {
+      composer.addPass(new UnrealBloomPass(size.clone().multiplyScalar(0.5), LOOK.bloom.strength, LOOK.bloom.radius, LOOK.bloom.threshold));
+    }
     composer.addPass(new OutputPass());
+    if (lens) {
+      composer.addPass(lens.pass);
+      lens.resize(size.x, size.y);
+    }
   }
 
   const anisotropy = renderer.capabilities.getMaxAnisotropy();
@@ -162,6 +190,19 @@ export function createLook(renderer: THREE.WebGLRenderer, scene: THREE.Scene, pl
       }
     },
     render(s, c) {
+      if (stream && lens) {
+        const time = performance.now() / 1000;
+        const light = monitorLight(time, stream.config.monitor);
+        lens.update(time, light);
+        if (monitor) {
+          // The screen is just below the webcam, facing the character.
+          const [right, up, towards] = stream.config.monitor.offset;
+          monitor.position.set(right, up, -towards).applyMatrix4(c.matrixWorld);
+          const level = Math.max(light[0], light[1], light[2], 1e-4);
+          monitor.color.setRGB(light[0] / level, light[1] / level, light[2] / level);
+          monitor.intensity = stream.config.monitor.intensity * level;
+        }
+      }
       if (composer) {
         if (renderPass!.scene !== s || renderPass!.camera !== c) Object.assign(renderPass!, { scene: s, camera: c });
         composer.render();
@@ -171,6 +212,7 @@ export function createLook(renderer: THREE.WebGLRenderer, scene: THREE.Scene, pl
       const size = renderer.getDrawingBufferSize(new THREE.Vector2());
       composer?.setPixelRatio(1);
       composer?.setSize(size.x, size.y);
+      lens?.resize(size.x, size.y);
     },
   };
 }

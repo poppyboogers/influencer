@@ -10,6 +10,11 @@ export interface TorsoSample {
   hipMid: Vec3 | null;
   /** The same shoulders and the midpoint of the ears in the picture: x right, y down, both in picture widths. */
   image: { left: [number, number]; right: [number, number]; ears: [number, number] };
+  /**
+   * True while a hand is in front of that shoulder (or the tracker has lost sight of it). The
+   * tracker then guesses where the shoulder is and the guess wanders, so the measurement is not used.
+   */
+  covered?: { left: boolean; right: boolean };
 }
 
 /** Torso motion for the avatar, measured from the pose it was calibrated in. Angles in radians. */
@@ -90,6 +95,12 @@ export class TorsoFilter {
   }
 
   update(s: TorsoSample, mirror: boolean, dt: number, now: number) {
+    // A hand in front of a shoulder: hold the torso exactly as it was until the shoulder is back
+    // in sight, rather than follow a guessed shoulder up and down.
+    if (s.covered?.left || s.covered?.right) {
+      if (this.value) this.lastSeen = now;
+      return;
+    }
     const L = s.shoulderLeft;
     const R = s.shoulderRight;
     const across: Vec3 = [L[0] - R[0], L[1] - R[1], L[2] - R[2]];

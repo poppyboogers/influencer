@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Stream preview - Character Mocap</title>
+    <link rel="icon" href="data:," />
+    <!--
+      A stand-in for the finished OBS picture: a 1920 x 1080 stream frame with the character's
+      1024 x 1024 stream view keyed out and placed in a corner. Drop a game screenshot or video on
+      the page to use it as the background. Not part of the hosted site.
+        ?character=vanduude   which character
+        ?live                 use the webcam (default: the built-in demo motion)
+        ?show=420             size of the character on the 1080-high frame, pixels
+        ?corner=br            br, bl, tr or tl
+    -->
+    <style>
+      html, body { margin: 0; height: 100%; background: #111; overflow: hidden; font: 13px ui-monospace, Consolas, monospace; color: #ddd; }
+      #frame { position: absolute; left: 50%; top: 50%; width: 1920px; height: 1080px; transform-origin: 0 0; overflow: hidden;
+        background: radial-gradient(ellipse at 30% 40%, #1b2a44 0%, #0a0f1c 45%, #020308 100%); box-shadow: 0 0 0 1px #333; }
+      #frame > img, #frame > video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+      #hint { position: absolute; left: 50%; top: 45%; transform: translate(-50%, -50%); font-size: 30px; color: #7f8aa3; text-align: center; }
+      #avatar { position: absolute; left: 0; top: 0; width: 1024px; height: 1024px; border: 0; background: transparent; transform-origin: 0 0; }
+      #bar { position: fixed; left: 8px; top: 8px; z-index: 2; background: rgba(0,0,0,.65); padding: 6px 10px; border-radius: 6px; display: flex; gap: 12px; align-items: center; }
+      #bar button { font: inherit; background: #222; color: #ddd; border: 1px solid #555; border-radius: 4px; padding: 2px 8px; cursor: pointer; }
+      #bar button.on { border-color: #6cf; color: #6cf; }
+    </style>
+  </head>
+  <body>
+    <div id="bar">
+      <span>size <input id="size" type="range" min="200" max="1080" step="10" /> <span id="sizeText"></span></span>
+      <span id="corners"></span>
+      <button id="mode"></button>
+      <button id="hide" title="Hide this bar (click the picture to bring it back)">hide</button>
+    </div>
+    <div id="frame">
+      <div id="hint">1920 x 1080 stream frame<br />drop a Star Citizen screenshot or video here</div>
+      <iframe id="avatar" allow="camera; microphone"></iframe>
+    </div>
+    <script type="module">
+      const params = new URLSearchParams(location.search);
+      const frame = document.querySelector('#frame');
+      const avatar = document.querySelector('#avatar');
+      const bar = document.querySelector('#bar');
+      const live = params.has('live');
+      let show = Number(params.get('show')) || 420;
+      let corner = params.get('corner') || 'br';
+      const margin = 24;
+
+      avatar.src = `./?character=${params.get('character') || 'vanduude'}&stream&key=alpha${live ? '' : '&demo'}`;
+
+      function place() {
+        const scale = show / 1024;
+        const x = corner.endsWith('l') ? margin : 1920 - margin - show;
+        const y = corner.startsWith('t') ? margin : 1080 - margin - show;
+        avatar.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+        document.querySelector('#size').value = show;
+        document.querySelector('#sizeText').textContent = `${show}px`;
+        for (const b of document.querySelectorAll('#corners button')) b.classList.toggle('on', b.dataset.corner === corner);
+      }
+      function fit() {
+        const scale = Math.min(innerWidth / 1920, innerHeight / 1080);
+        frame.style.transform = `scale(${scale}) translate(-50%, -50%)`;
+      }
+      for (const c of ['tl', 'tr', 'bl', 'br']) {
+        const b = document.createElement('button');
+        b.textContent = c;
+        b.dataset.corner = c;
+        b.onclick = () => { corner = c; place(); };
+        document.querySelector('#corners').append(b);
+      }
+      document.querySelector('#size').oninput = (e) => { show = Number(e.target.value); place(); };
+      const mode = document.querySelector('#mode');
+      mode.textContent = live ? 'switch to demo' : 'switch to webcam';
+      mode.onclick = () => {
+        if (live) params.delete('live');
+        else params.set('live', '');
+        location.search = params.toString();
+      };
+      if (params.has('bare')) bar.style.display = 'none';
+      document.querySelector('#hide').onclick = () => (bar.style.display = 'none');
+      frame.onclick = () => (bar.style.display = '');
+      // Keys pressed on this page go to the character's page inside (H, C, M, B, F ...).
+      addEventListener('keydown', (e) => avatar.contentWindow?.dispatchEvent(new KeyboardEvent('keydown', { key: e.key })));
+      addEventListener('resize', fit);
+
+      // Drop a screenshot or a video on the page to stand in for the game.
+      addEventListener('dragover', (e) => e.preventDefault());
+      addEventListener('drop', (e) => {
+        e.preventDefault();
+        const file = e.dataTransfer.files[0];
+        if (!file) return;
+        frame.querySelectorAll(':scope > img, :scope > video').forEach((el) => el.remove());
+        const el = document.createElement(file.type.startsWith('video') ? 'video' : 'img');
+        el.src = URL.createObjectURL(file);
+        if (el.tagName === 'VIDEO') Object.assign(el, { autoplay: true, loop: true, muted: true });
+        frame.prepend(el);
+        document.querySelector('#hint').style.display = 'none';
+      });
+      fit();
+      place();
+    </script>
+  </body>
+</html>
